@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use serde_json::Value;
 use uuid::Uuid;
@@ -9,8 +10,8 @@ use tej_protoc::protoc::decoder::DecodedResponse;
 use tej_protoc::protoc::File;
 
 use crate::db::models::{BackgroundRemoverTask, UpdateBackgroundRemoverTask};
-use crate::implementations::services::build_standard_response;
-use crate::implementations::services::task_ws::update_processing_state;
+use crate::implementations::websocket::services::build_standard_response;
+use crate::implementations::websocket::services::task_ws::update_processing_state;
 
 use crate::ResponseHandlerSharedData;
 use crate::utils::file_utils::media_root_relative;
@@ -49,7 +50,7 @@ pub async fn handle_response_received_from_server(decoded_response: DecodedRespo
         } else if status == "progress_update" {
             handle_progress_update(task_id, parsed, shared_data).await;
         } else if status == "failed" {
-            handle_failed_result(task_id, parsed, files, shared_data).await;
+            handle_failed_result(task_id, parsed, shared_data).await;
         } else {
             log::warn!("Event type {:?} not handled", status);
         }
@@ -91,11 +92,37 @@ async fn handle_success_result(task_id: Uuid, message: Value, files: Vec<File>, 
     }
 
     let sub_dir = PathBuf::from("background-remover");
-    let (processed_image_path, preview_processed_image_path, mask_image_path)
-        = match image_utils::save_task_images_to_media(&filename, &old_instance.key, &files, Some(&sub_dir)) {
-        Ok(values) => values,
+
+    // Save images in separate task
+    let save_handler = tokio::task::spawn_blocking(
+        move || {
+            return image_utils::save_task_images_to_media(
+                &filename.clone(),
+                &old_instance.key.clone(),
+                &files,
+                Some(&sub_dir.clone()),
+            );
+        }
+    ).await;
+
+    let (processed_image_path, preview_processed_image_path, mask_image_path);
+
+    match save_handler {
+        Ok(save_result) => {
+            match save_result {
+                Ok(paths) => {
+                    processed_image_path = paths.0;
+                    preview_processed_image_path = paths.1;
+                    mask_image_path = paths.2;
+                }
+                Err(error) => {
+                    log::error!("Failed to save images. Error: {}", error);
+                    return;
+                }
+            };
+        }
         Err(error) => {
-            log::error!("Failed to save images received from bp server. Error: {}", error);
+            log::error!("Failed to save images in separate thread. {}", error);
             return;
         }
     };
@@ -105,7 +132,7 @@ async fn handle_success_result(task_id: Uuid, message: Value, files: Vec<File>, 
         Ok(value) => value.to_string_lossy().to_string(),
         Err(error) => {
             log::error!("Failed to generate relative media url for mask image. Error: {}", error);
-            handle_failed_result(task_id, message, files, shared_data).await;
+            handle_failed_result(task_id, message, shared_data).await;
             return;
         }
     };
@@ -116,7 +143,7 @@ async fn handle_success_result(task_id: Uuid, message: Value, files: Vec<File>, 
         Ok(value) => value.to_string_lossy().to_string(),
         Err(error) => {
             log::error!("Failed to generate relative media url for processed image. Error: {}", error);
-            handle_failed_result(task_id, message, files, shared_data).await;
+            handle_failed_result(task_id, message, shared_data).await;
             return;
         }
     };
@@ -127,7 +154,7 @@ async fn handle_success_result(task_id: Uuid, message: Value, files: Vec<File>, 
         Ok(value) => value.to_string_lossy().to_string(),
         Err(error) => {
             log::error!("Failed to generate relative media url for preview processed image. Error: {}", error);
-            handle_failed_result(task_id, message, files, shared_data).await;
+            handle_failed_result(task_id, message, shared_data).await;
             return;
         }
     };
@@ -164,10 +191,19 @@ async fn handle_success_result(task_id: Uuid, message: Value, files: Vec<File>, 
 }
 
 async fn handle_progress_update(task_id: Uuid, message: Value, shared_data: Arc<ResponseHandlerSharedData>) {
-    broadcast_ws(&task_id, message, shared_data).await;
+    let background_remover_task = match BackgroundRemoverTask::fetch(
+        shared_data.db_wrapper.clone(), &task_id).await {
+        Ok(task) => task,
+        Err(error) => {
+            log::error!("Failed to fetch background remover task from database. Error {}", error);
+            return;
+        }
+    };
+
+    broadcast_ws(&background_remover_task.task_group, message, shared_data).await;
 }
 
-async fn handle_failed_result(task_id: Uuid, message: Value, _: Vec<File>, shared_data: Arc<ResponseHandlerSharedData>) {
+async fn handle_failed_result(task_id: Uuid, message: Value, shared_data: Arc<ResponseHandlerSharedData>) {
     log::error!("Error message received from BP Server: {}", message);
 
     let instance = match BackgroundRemoverTask::fetch(shared_data.db_wrapper.clone(), &task_id).await {
@@ -200,7 +236,9 @@ async fn handle_failed_result(task_id: Uuid, message: Value, _: Vec<File>, share
         None,
     );
 
+    println!("Sending");
     broadcast_ws(&instance.task_group, response, shared_data).await;
+    println!("Sent");
 }
 
 async fn broadcast_ws_success(instance: BackgroundRemoverTask, _: Value,
@@ -218,6 +256,7 @@ async fn broadcast_ws_success(instance: BackgroundRemoverTask, _: Value,
 
     let response = build_standard_response("success", "result", None,
                                            Some(serialized), None);
+
     broadcast_ws(&instance.task_group, response, shared_data).await;
 }
 
@@ -227,7 +266,7 @@ async fn broadcast_ws(task_group: &Uuid, message: Value, shared_data: Arc<Respon
 
     if let Some(session) = sessions.get_mut(&task_group.to_string()) {
         log::debug!("WS client found in ws sessions by task id(key): {}", task_group);
-        match session.text(message.to_string()).await {
+        match session.send_json(&message).await {
             Ok(()) => {
                 log::debug!("Sent from handler to websocket client: {}", message);
             }
@@ -239,6 +278,7 @@ async fn broadcast_ws(task_group: &Uuid, message: Value, shared_data: Arc<Respon
             }
         };
     } else {
+        log::error!("Keys: {:?} Searched {:?}", sessions.keys(), task_group);
         log::debug!("WS client not found. May be connection no more exist. Task id: {}", task_group);
     }
 }

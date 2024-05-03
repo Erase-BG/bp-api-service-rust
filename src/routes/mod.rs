@@ -1,36 +1,42 @@
-mod shortcut;
-
 use std::path::PathBuf;
 use std::str::FromStr;
 
-use actix_multipart::form::MultipartForm;
-use actix_web::{get, HttpRequest, HttpResponse, post, Responder, web};
-use actix_web::web::{Payload, Query};
+use racoon::core::forms::{Files, FormData};
+use racoon::core::request::Request;
+use racoon::core::response::{AbstractResponse, HttpResponse, JsonResponse, Response};
+use racoon::core::response::status::ResponseStatus;
+use racoon::core::shortcuts::SingleText;
+use racoon::core::websocket::Websocket;
+use serde_json::json;
 
 use uuid::Uuid;
 
-use crate::{AppData};
 use crate::db::models::{BackgroundRemoverTask, NewBackgroundRemoverTask};
-use crate::forms::{AuthImageUploadQueryParams, ImageUploadForm};
-use crate::routes::shortcut::ShortcutResponse;
-
-use crate::implementations;
-use crate::implementations::services::build_standard_response;
-
-use crate::utils::file_utils::{save_temp_file_to_media, media_root_relative};
+use crate::forms::ImageUploadForm;
+use crate::implementations::websocket::services::build_standard_response;
+use crate::implementations::websocket::services::task_ws::listen_ws_message;
+use crate::SharedContext;
+use crate::utils::file_utils::{media_root_relative, save_temp_file_to_media};
 use crate::utils::image_utils;
 
-///
-/// Handles the common implementation for saving and insertion of uploaded image.
-/// If save is successful, returns instance of BackgroundRemoverTask model else returns HttpResponse
-/// error for public view. The error response is generic and does not contain any critical information.
-///
-/// Checkout log for the specific errors.
-///
-async fn handle_upload_common(data: &mut web::Data<AppData>, form: &MultipartForm<ImageUploadForm>,
-                              user_identifier: Option<String>) -> Result<BackgroundRemoverTask, HttpResponse> {
-    // A unique ID to identify this image publicly
+async fn upload_common(shared_context: &SharedContext, form_data: &FormData, files: &Files) -> Result<BackgroundRemoverTask, Response> {
+    // Returns validated form
+    let validated_form = match ImageUploadForm::validate(&form_data, &files) {
+        Ok(form) => form,
+        Err(error) => {
+            return Err(JsonResponse::bad_request().body(build_standard_response(
+                "failed", "form_error", None, None, Some(error),
+            )));
+        }
+    };
+
+    Ok(save_instance(shared_context, &validated_form).await?)
+}
+
+async fn save_instance(shared_context: &SharedContext, validated_form: &ImageUploadForm<'_>)
+                       -> Result<BackgroundRemoverTask, Response> {
     let task_id = Uuid::new_v4();
+    let user_identifier = None;
 
     // Saves uploaded image to the disk
     // The save dir looks like this /{project_name}/{media_root}/{task_id}/original/
@@ -38,11 +44,12 @@ async fn handle_upload_common(data: &mut web::Data<AppData>, form: &MultipartFor
     log::debug!("Saving temp image to database.");
 
     // Path where the original image is saved
-    let original_image_path = match save_temp_file_to_media(&form.original_image, sub_dir) {
+    let original_image_path = match save_temp_file_to_media(&validated_form.original_image,
+                                                            sub_dir) {
         Ok(path) => path,
         Err(error) => {
             log::error!("Failed to save temp media file. Error: {}", error);
-            return Err(HttpResponse::json_internal_server_error());
+            return Err(JsonResponse::bad_request().empty());
         }
     };
 
@@ -55,12 +62,12 @@ async fn handle_upload_common(data: &mut web::Data<AppData>, form: &MultipartFor
         Err(error) => {
             log::error!("Failed to save preview original image {:?}. Error: {}",
                 original_image_path_buf,  error);
-            return Err(HttpResponse::json_internal_server_error());
+            return Err(JsonResponse::bad_request().empty());
         }
     };
 
     // Converts Task group String to UUID
-    let task_group = match Uuid::from_str(form.task_group.as_str()) {
+    let task_group = match Uuid::from_str(validated_form.task_group.as_str()) {
         Ok(uuid) => uuid,
         Err(error) => {
             log::error!("Failed to convert task group to UUID format. Error {:?}", error);
@@ -71,13 +78,13 @@ async fn handle_upload_common(data: &mut web::Data<AppData>, form: &MultipartFor
                 None,
                 None,
             );
-            return Err(HttpResponse::BadRequest().json(error_response));
+            return Err(JsonResponse::bad_request().body(error_response));
         }
     };
 
     // Extract country value if present
     let country;
-    if let Some(value) = &form.country {
+    if let Some(value) = validated_form.country {
         country = Some(value.to_string());
     } else {
         country = None;
@@ -89,7 +96,7 @@ async fn handle_upload_common(data: &mut web::Data<AppData>, form: &MultipartFor
         Ok(value) => value.to_string_lossy().to_string(),
         Err(error) => {
             log::error!("Failed to generate relative media url for original image. Error: {}", error);
-            return Err(HttpResponse::json_internal_server_error());
+            return Err(JsonResponse::internal_server_error().empty());
         }
     };
 
@@ -98,7 +105,7 @@ async fn handle_upload_common(data: &mut web::Data<AppData>, form: &MultipartFor
         Ok(value) => value.to_string_lossy().to_string(),
         Err(error) => {
             log::error!("Failed to generate relative media url for preview original image. Error: {}", error);
-            return Err(HttpResponse::json_internal_server_error());
+            return Err(JsonResponse::internal_server_error().empty());
         }
     };
 
@@ -114,193 +121,125 @@ async fn handle_upload_common(data: &mut web::Data<AppData>, form: &MultipartFor
 
     // Inserts the new task record in the database
     log::debug!("Inserting new task to db");
-    match BackgroundRemoverTask::insert_new_task(data.db_wrapper.clone(),
+    match BackgroundRemoverTask::insert_new_task(shared_context.db_wrapper.clone(),
                                                  &new_background_remover_task).await {
         Ok(_) => {
             log::debug!("New task saved in database. Task id: {:?}", new_background_remover_task.key);
         }
         Err(error) => {
             log::error!("Failed to insert new task. Error: {}", error);
-            return Err(HttpResponse::json_internal_server_error());
+            return Err(JsonResponse::internal_server_error().empty());
         }
     }
 
     // Returns full instance of BackgroundRemoverTask model if successful
     return match BackgroundRemoverTask::fetch(
-        data.db_wrapper.clone(), &task_id).await {
+        shared_context.db_wrapper.clone(), &task_id).await {
         Ok(task) => {
             Ok(task)
         }
         Err(error) => {
             log::error!("Failed to fetch background remover task. Error: {}", error);
-            Err(HttpResponse::json_internal_server_error())
+            Err(JsonResponse::internal_server_error().empty())
         }
     };
 }
 
-///
-/// Image uploading endpoint for all the users without API Key. Uploading image form itself won't start
-/// processing image. Request background processing request from websocket endpoint
-/// `/v1/remove-background/upload/`
-///
-#[post("/v1/bp/u/")]
-async fn non_auth_upload(mut data: web::Data<AppData>, mut form: MultipartForm<ImageUploadForm>)
-                         -> impl Responder {
-    // Saves uploaded image and inserts new record in the database
-    let background_remover_task = match handle_upload_common(&mut data, &mut form, None).await {
-        Ok(new_task) => new_task,
-        Err(error) => {
-            log::error!("Failed to update task in database.");
-            return error;
-        }
-    };
+pub async fn public_upload_view(mut request: Request) -> Response {
+    if request.method != "POST" {
+        return JsonResponse::not_found().body(json!({
+            "error": "Page not found"
+        }));
+    }
 
-    // Converts instance to JSON. The serialized response is modified and does not represent exact
-    // fields as in the instance.
-    let serialized = match background_remover_task.serialize() {
-        Ok(serialized) => serialized,
-        Err(error) => {
-            log::error!("Failed to convert instance to JSON. Error: {}", error);
-            return HttpResponse::json_internal_server_error();
-        }
-    };
+    let (form_data, files) = request.parse().await;
 
-    let response = build_standard_response(
-        "success",
-        "image_upload",
-        None,
-        Some(serialized),
-        None,
-    );
-
-    HttpResponse::Ok().json(response)
-}
-
-///
-/// Endpoint for uploading file with API key. Currently not implemented API key checks.
-///
-#[post("/v1/remove-background/upload/")]
-async fn auth_upload(mut data: web::Data<AppData>, request: HttpRequest,
-                     form: MultipartForm<ImageUploadForm>) -> impl Responder {
-    // Extracts API key from the request query params
-    let _api_key: String = match Query::<AuthImageUploadQueryParams>::from_query(&request.query_string()) {
-        Ok(query_params) => query_params.api_key.clone(),
-        Err(error) => {
-            log::error!("Error occurred: {}", error);
-            return HttpResponse::Unauthorized().body("Api key is missing.");
-        }
-    };
-
-    // Extracts BackgroundRemoverTask model instance from the upload result
-    let background_remover_task = match handle_upload_common(&mut data,
-                                                             &form, None).await {
-        Ok(task) => task,
+    let context = request.context::<SharedContext>().unwrap();
+    let instance = match upload_common(context, &form_data, &files).await {
+        Ok(instance) => instance,
         Err(error) => {
             return error;
         }
     };
 
-    // Converts instance to JSON. The serialized response is modified and does not represent exact
-    // fields as in the instance.
-    let serialized = match background_remover_task.serialize() {
+    let serialized = match instance.serialize() {
         Ok(serialized) => serialized,
         Err(error) => {
-            log::error!("Failed to convert instance to JSON. Error: {}", error);
-            return HttpResponse::json_internal_server_error();
+            log::error!("{}", error);
+            return JsonResponse::internal_server_error().empty();
         }
     };
 
-    // Sends this task instance for processing to the bp server
-    let _ = data.tx_image_mpsc_channel.send(background_remover_task).await;
-    HttpResponse::Ok().json(serialized)
+    let response = build_standard_response("success", "image_upload", None,
+                                           Some(serialized), None);
+
+    JsonResponse::ok().body(response)
 }
 
-#[get("/v1/remove-background/details/{task_id}/")]
-async fn task_details(task_id_path: web::Path<String>, data: web::Data<AppData>) -> impl Responder {
-    // Converts task id path to UUID
-    let task_id = match Uuid::from_str(&task_id_path) {
+pub async fn task_details_view(request: Request) -> Response {
+    let context = request.context::<SharedContext>().unwrap();
+    let task_id = match Uuid::parse_str(request.path_params.value("task_id").unwrap()) {
         Ok(uuid) => uuid,
         Err(error) => {
-            log::error!("Invalid task id format. Error: {}", error);
+            return JsonResponse::bad_request().body(json!({
+                "error": "Not a valid task id format."
+            }));
+        }
+    };
+
+    let instance = match BackgroundRemoverTask::fetch(context.db_wrapper.clone(),
+                                                      &task_id).await {
+        Ok(instance) => instance,
+        Err(error) => {
+            return JsonResponse::not_found().body(json!({
+                "error": "Invalid task id."
+            }));
+        }
+    };
+
+    let serialized = match instance.serialize() {
+        Ok(serialized) => serialized,
+        Err(error) => {
+            log::error!("{}", error);
+            return JsonResponse::internal_server_error().empty();
+        }
+    };
+
+    JsonResponse::ok().body(serialized)
+}
+
+pub async fn ws_view(mut request: Request) -> Response {
+    let (mut websocket, connected) = Websocket::from(&request).await;
+    if !connected {
+        return websocket.response();
+    }
+
+    println!("Connected ws");
+
+    let task_group_value = request.path_params.value("task_group").unwrap();
+    let task_group = match Uuid::from_str(task_group_value) {
+        Ok(uuid) => uuid,
+        Err(error) => {
+            log::error!("Not a valid task group. {}", error);
             let error_response = build_standard_response(
                 "failed",
-                "invalid_format",
-                Some("Invalid task id format"),
+                "invalid_task_group",
+                Some("Not a valid task group format"),
                 None,
                 None,
             );
-            return HttpResponse::BadRequest().json(error_response);
+            let _ = websocket.send_json(&error_response).await;
+            return websocket.response();
         }
     };
 
-    // Fetches background remover task instance with task_id. Here, the task_id represents key column
-    // in the database.
-    let instance = match BackgroundRemoverTask::fetch(data.db_wrapper.clone(), &task_id).await {
-        Ok(task) => task,
-        Err(error) => {
-            log::error!("Failed to fetch task id. Error: {}", error);
-            return HttpResponse::NotFound().body("This task id does not exist.");
-        }
-    };
+    let shared_context = request.context::<SharedContext>().unwrap();
+    listen_ws_message(shared_context, &task_group, &mut websocket).await;
 
-    HttpResponse::Ok().json(instance)
-}
+    // Removes from ws_sessions list since its disconnected.
+    let ws_sessions_ref = shared_context.websocket_connections.sessions.clone();
+    let mut ws_sessions = ws_sessions_ref.lock().await;
+    ws_sessions.remove(&task_group.to_string());
 
-
-///
-/// WebSocket endpoint for staring processing operation and receiving results.
-///
-///
-/// Send this JSON from WebSocket client.
-/// ```markdown
-/// {
-///     "key": "<uuid>"
-/// }
-/// ```
-///
-#[get("/ws/remove-background/{task_group}/")]
-async fn ws_result_websocket(task_group_path: web::Path<String>, data: web::Data<AppData>,
-                             request: HttpRequest, stream: Payload) -> impl Responder {
-    // Extracts task_group from query params
-    let task_group = match Uuid::from_str(&task_group_path) {
-        Ok(uuid) => uuid,
-        Err(error) => {
-            // Task group is not a valid UUID
-            log::error!("Failed to convert String to UUID conversion. Error: {}", error);
-            let error_response = build_standard_response(
-                "failed",
-                "invalid_format",
-                Some("Invalid task group format"),
-                None,
-                None,
-            );
-            return HttpResponse::BadRequest().json(error_response);
-        }
-    };
-
-    let (response, session, message_stream) =
-        match actix_ws::handle(&request, stream) {
-            Ok(values) => values,
-            Err(error) => {
-                log::error!("Failed to handle websocket: {}", error);
-                return HttpResponse::json_internal_server_error();
-            }
-        };
-
-    let websocket_connections = &data.websocket_connections;
-    let ws_sessions = websocket_connections.sessions.clone();
-    log::info!("Client connected to websocket.");
-
-    // Spawns new task after upgrading to WebSocket connection
-    actix_web::rt::spawn(async move {
-        // Calls implementation logic for websocket
-        implementations::services::task_ws::listen_ws_message(
-            data,
-            task_group,
-            session,
-            message_stream,
-            ws_sessions,
-        ).await;
-    });
-    response
+    websocket.response()
 }

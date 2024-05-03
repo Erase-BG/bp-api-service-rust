@@ -62,7 +62,9 @@ pub mod models {
     use sqlx::types::JsonValue;
 
     use chrono::{DateTime};
+    use futures_util::TryStreamExt;
     use serde::de::Error;
+    use sqlx::postgres::PgRow;
     use uuid::Uuid;
 
     use crate::db::{DBWrapper};
@@ -75,6 +77,7 @@ pub mod models {
     /// This struct is the mapped columns of table `background_remover_task`.
     ///
     #[derive(Debug)]
+    #[derive(sqlx::FromRow)]
     pub struct BackgroundRemoverTask {
         pub task_id: i64,
         pub date_created: DateTime<Utc>,
@@ -309,27 +312,28 @@ pub mod models {
                 SELECT * FROM background_remover_task WHERE key=$1 LIMIT 1
             "#;
 
-            let pg_row = sqlx::query(FETCH_QUERY)
+            let instance: BackgroundRemoverTask = sqlx::query_as(FETCH_QUERY)
                 .bind(key)
                 .fetch_one(&connection).await?;
 
-            log::debug!("Query fetched: Rows: {}", pg_row.columns().len());
+            Ok(instance)
+        }
 
-            let record = BackgroundRemoverTask {
-                task_id: pg_row.try_get::<i64, _>("task_id")?,
-                date_created: pg_row.try_get::<DateTime<Utc>, _>("date_created")?,
-                key: pg_row.try_get::<Uuid, _>("key")?,
-                task_group: pg_row.try_get::<Uuid, _>("task_group")?,
-                original_image_path: pg_row.try_get::<String, _>("original_image_path")?,
-                preview_original_image_path: pg_row.try_get::<Option<String>, _>("preview_original_image_path")?,
-                mask_image_path: pg_row.try_get::<Option<String>, _>("mask_image_path")?,
-                processed_image_path: pg_row.try_get::<Option<String>, _>("processed_image_path")?,
-                preview_processed_image_path: pg_row.try_get::<Option<String>, _>("preview_processed_image_path")?,
-                processing: pg_row.try_get::<Option<bool>, _>("processing")?,
-                user_identifier: pg_row.try_get::<Option<String>, _>("user_identifier")?,
-                logs: pg_row.try_get::<Option<JsonValue>, _>("logs")?,
-            };
-            return Ok(record);
+        pub async fn fetch_by_date_from(db_wrapper: DBWrapper, from_past: &str, to_present: &str) -> Result<Vec<BackgroundRemoverTask>, sqlx::Error> {
+            let connection = db_wrapper.connection;
+
+            let fetch_query = format!(r#"
+                SELECT * FROM background_remover_task
+                    WHERE date_created >= NOW() - INTERVAL '{}'
+                    AND date_created <= NOW() - INTERVAL '{}'
+            "#, from_past, to_present);
+
+            let models = sqlx::query_as(&fetch_query)
+                .bind(from_past.to_string())
+                .bind(to_present.to_string())
+                .fetch_all(&connection).await?;
+
+            Ok(models)
         }
     }
 }

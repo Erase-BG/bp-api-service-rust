@@ -78,9 +78,9 @@ pub mod urls {
 
 pub mod file_utils {
     use std::env;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
 
-    use actix_multipart::form::tempfile::TempFile;
+    use racoon::core::forms::FileField;
 
     ///
     /// Takes input as a path and creates all required directories if not exist.
@@ -151,16 +151,16 @@ pub mod file_utils {
     /// Moves temporary file to Disk. If the destination directory does not exist, the directories
     /// are created.
     ///
-    pub fn move_temp_file(temp_file: &TempFile, destination: &PathBuf) -> std::io::Result<()> {
+    pub fn move_temp_file(from: &Path, destination: &PathBuf) -> std::io::Result<()> {
         create_dir_from_path(destination)?;
         // Move temp file to the destination
-        std::fs::rename(&temp_file.file, destination)
+        std::fs::rename(&from, destination)
     }
 
     ///
     /// Saves temporary file to MEDIA_ROOT from environment variable with relative path if given.
     ///
-    pub fn save_temp_file_to_media(temp_file: &TempFile, sub_dir: Option<String>) -> Result<PathBuf, String> {
+    pub fn save_temp_file_to_media(file_field: &FileField, sub_dir: Option<String>) -> Result<PathBuf, String> {
         // Extracts media root directory to save files
         let media_root = match env::var("MEDIA_ROOT") {
             Ok(path) => path,
@@ -174,10 +174,7 @@ pub mod file_utils {
             }
         };
 
-        let filename = &temp_file.file_name;
-        if filename.is_none() {
-            return Err("Filename is missing.".to_owned());
-        }
+        let filename = &file_field.name;
 
         // Saves uploaded file to the media root directory
         let mut save_dir = PathBuf::new();
@@ -187,12 +184,13 @@ pub mod file_utils {
             save_dir.push(relative_path);
         }
 
-        save_dir.push(filename.clone().unwrap());
+        save_dir.push(filename.clone());
 
         // Moves temporary file to the given destination
-        if move_temp_file(temp_file, &save_dir).is_err() {
+        let move_from = file_field.temp_file.path();
+        if move_temp_file(file_field.temp_file.path(), &save_dir).is_err() {
             let error = format!("Failed to move file from {:?}  to {:?}",
-                                temp_file.file.as_ref(), save_dir);
+                                move_from, save_dir);
             return Err(error.to_owned());
         }
 

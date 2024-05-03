@@ -1,6 +1,6 @@
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::{env, vec};
+use std::{env, thread, vec};
 use std::path::Path;
 use std::sync::{Arc};
 use std::time::Duration;
@@ -14,9 +14,11 @@ use tej_protoc::protoc::encoder::{build_bytes_for_message, build_raw_bytes};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 use chrono::Utc;
+use tokio::task::block_in_place;
 
 use crate::{ResponseHandlerSharedData};
 use crate::clients::bp_request_client::handlers::handle_response_received_from_server;
+use crate::db::models::BackgroundRemoverTask;
 
 mod handlers;
 
@@ -61,64 +63,29 @@ impl BPRequestClient {
     /// If connection fails, `tcp_stream` is set to `None`.
     ///
     pub async fn handle_response(&mut self, app_data: Arc<ResponseHandlerSharedData>) {
-        let address = self.address.clone();
-        let tx_tcp_stream_ref = self.tx_tcp_stream.clone();
-        let retry_duration = self.retry_duration.clone();
+        let mut stream = TcpStream::connect(self.address.clone()).unwrap();
+        Self::handshake(&mut stream);
+
+        let tcp_ref = self.tx_tcp_stream.clone();
+        let mut tcp = tcp_ref.lock().await;
+        *tcp = Some(stream.try_clone().unwrap());
+
+        let ping_ref = tcp_ref.clone();
+        tokio::spawn(async move {
+            let _ = Self::ping(ping_ref).await;
+        });
 
         tokio::spawn(async move {
-            let tcp_stream_ref = tx_tcp_stream_ref.clone();
-            log::info!("Connecting to BP Server...");
-
-            let callback_ref = app_data.clone();
-
             loop {
-                let tcp_stream;
-                let address_cloned = address.clone();
-
-                // Unexpected behaviour of blocking Postgres pool is seen when std TCP stream is
-                // executed in asynchronous runtime. To prevent deadlock, task is spawned in new
-                // thread.
-                let handler = tokio::task::spawn_blocking(move || {
-                    return TcpStream::connect(address_cloned);
-                });
-                tcp_stream = handler.await.unwrap();
-
-                let callback_ref = callback_ref.clone();
-
-                let tx_tcp_stream_set_ref = tcp_stream_ref.clone();
-                let tx_tcp_stream_ping_ref = tcp_stream_ref.clone();
-
-                match tcp_stream {
-                    Ok(mut tcp_stream) => {
-                        log::info!("Connected successfully.");
-                        Self::handshake(&mut tcp_stream);
-
-                        // Acquires lock and sets new TcpStream to tcp_stream field.
-                        // It is inside the scope to release lock instantly since another thread
-                        // may want to access tcp_stream field for write operations.
-                        {
-                            let mut tcp_stream_lock = tx_tcp_stream_set_ref.lock().await;
-                            *tcp_stream_lock = Some(tcp_stream.try_clone().unwrap());
-                        }
-
-                        let _ = tokio::spawn(async move {
-                            log::info!("Sending periodic ping bytes...");
-                            Self::ping(tx_tcp_stream_ping_ref.clone()).await;
-                        });
-
-                        Self::handle_bytes_read(tcp_stream.try_clone().unwrap(), callback_ref.clone()).await;
-                    }
-
-                    Err(error) => {
-                        log::error!("Error: {:?}", error);
-                    }
-                }
-
-                let mut tcp_stream_lock = tcp_stream_ref.lock().await;
-                *tcp_stream_lock = None;
-
-                log::info!("Reconnecting in {} seconds...", retry_duration.as_secs_f64());
-                sleep(retry_duration.clone()).await;
+                let response = block_in_place(|| decode_tcp_stream(&mut stream).unwrap());
+                handle_response_received_from_server(response, app_data.clone()).await;
+                // match BackgroundRemoverTask::update_task(db_wrapper.clone(), &update_task).await {
+                //     Ok(_) => {}
+                //     Err(error) => {
+                //         log::error!("Failed to update task in database. Error {}", error);
+                //         return;
+                //     }
+                // }
             }
         });
     }
@@ -200,6 +167,7 @@ impl BPRequestClient {
             let decoded_response = decode_tcp_stream(&mut tcp_stream);
             match decoded_response {
                 Ok(decoded_response) => {
+                    println!("Received: {:?}", String::from_utf8_lossy(&decoded_response.message));
                     handle_response_received_from_server(decoded_response, shared_data.clone()).await;
                 }
 
@@ -208,6 +176,7 @@ impl BPRequestClient {
                     break;
                 }
             }
+            sleep(Duration::from_millis(100)).await;
         }
     }
 
