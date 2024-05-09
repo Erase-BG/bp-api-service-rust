@@ -5,6 +5,7 @@ pub mod services {
     use serde_json::{Value};
     use tokio::sync::Mutex;
     use uuid::Uuid;
+    use crate::WebSocketConnections;
 
     ///
     /// Well-formed JSON response style for better clarity for success and error response.
@@ -36,18 +37,15 @@ pub mod services {
     ///
     /// Common function for sending message by passing `task_id` and `ws_sessions`.
     ///
-    pub async fn send_message(task_group: &Uuid, ws_sessions: Arc<Mutex<HashMap<String, Websocket>>>,
+    pub async fn send_message(task_group: &Uuid, ws_connections: WebSocketConnections,
                               response: Value) {
-        let mut sessions = ws_sessions.lock().await;
-        // Session is there stored, but may not be live
-        // If session is no more active, removes from the session
+        let sessions = ws_connections.sessions.lock().await;
 
-        if let Some(session) = sessions.get_mut(&task_group.to_string()) {
-            // Send error message to websocket client
-            if session.send_json(&response).await.is_err() {
-                // Failed to send message. Client may be disconnected
-                sessions.remove(&task_group.to_string());
-            };
+        if let Some(ws_wrappers) = sessions.get(&task_group.to_string()) {
+            for ws_wrapper in ws_wrappers.iter() {
+                let websocket = &ws_wrapper.websocket;
+                let _ = websocket.send_json(&response).await;
+            }
         }
     }
 
@@ -64,6 +62,7 @@ pub mod services {
         use crate::db::models::BackgroundRemoverTask;
         use crate::implementations::websocket::services::build_standard_response;
         use crate::utils::file_utils::media_file_path;
+        use crate::{WebSocketConnections, WSWrapper};
 
 
         ///
@@ -74,14 +73,14 @@ pub mod services {
         ///
         pub async fn send_new_task_to_bp_server(tcp_stream: Arc<Mutex<Option<TcpStream>>>,
                                                 instance: BackgroundRemoverTask,
-                                                sessions: Arc<Mutex<HashMap<String, Websocket>>>) {
+                                                ws_connections: WebSocketConnections) {
             let original_image_abs_path = match media_file_path(
                 &PathBuf::from(&instance.original_image_path)) {
                 Ok(value) => value.to_string_lossy().to_string(),
                 Err(error) => {
                     log::error!("Unable to get absolute path from file {}. Error: {}",
                         &instance.original_image_path, error);
-                    send_internal_server_error(&instance, sessions.clone()).await;
+                    send_internal_server_error(&instance, ws_connections).await;
                     return;
                 }
             };
@@ -93,7 +92,7 @@ pub mod services {
                 }
                 Err(error) => {
                     log::error!("Failed to sent task {:?}. Error: {}", original_image_abs_path, error);
-                    send_internal_server_error(&instance, sessions.clone()).await;
+                    send_internal_server_error(&instance, ws_connections.clone()).await;
                 }
             }
         }
@@ -103,7 +102,7 @@ pub mod services {
         /// help of `ws_sessions` and instance `task_group`.
         ///
         pub async fn send_internal_server_error(instance: &BackgroundRemoverTask,
-                                                sessions: Arc<Mutex<HashMap<String, Websocket>>>) {
+                                                ws_connections: WebSocketConnections) {
             let response = build_standard_response(
                 "failed",
                 "internal_server_error",
@@ -112,21 +111,19 @@ pub mod services {
                 None,
             );
 
-            // Extracts current task websocket session
-            let mut sessions = sessions.lock().await;
-            let ws_session = sessions.get_mut(&instance.task_group.to_string());
-
-            if let Some(session) = ws_session {
-                match session.send_json(&response).await {
-                    Ok(_) => {
-                        log::info!("Sent server error message");
-                    }
-                    Err(closed) => {
-                        log::error!(
+            let sessions = ws_connections.sessions.lock().await;
+            if let Some(ws_wrappers) = sessions.get(&instance.task_group.to_string()) {
+                for ws_wrapper in ws_wrappers.iter() {
+                    match ws_wrapper.websocket.send_json(&response).await {
+                        Ok(_) => {
+                            log::info!("Sent server error message");
+                        }
+                        Err(closed) => {
+                            log::error!(
                             "Unable to send error message to websocket client {}",
                             closed
                         );
-                        sessions.remove(&instance.task_group.to_string());
+                        }
                     }
                 }
             }
@@ -152,7 +149,7 @@ pub mod services {
         use crate::db::DBWrapper;
         use crate::db::models::{BackgroundRemoverTask};
 
-        use crate::SharedContext;
+        use crate::{SharedContext, WebSocketConnections, WSWrapper};
         use crate::implementations::websocket::services::{build_standard_response, send_message};
 
         ///
@@ -164,15 +161,12 @@ pub mod services {
         /// `HARD_PROCESS` is not set to `true`, it sends already processed result to the `ws_session` .
         ///
         pub async fn listen_ws_message(shared_context: &SharedContext, task_group: &Uuid, websocket: &mut Websocket) {
-            let ws_sessions = shared_context.websocket_connections.sessions.clone();
+            let ws_sessions = shared_context.websocket_connections.clone();
 
             // Inserts the current websocket session to the HashMap.
             // These websocket sessions will be used by bp_request_client module handler to forward messages.
-            let ws_sessions_set_ref = ws_sessions.clone();
-            {
-                let mut sessions_map = ws_sessions_set_ref.lock().await;
-                sessions_map.insert(task_group.to_string(), websocket.clone());
-            }
+            let ws_wrapper = WSWrapper { uid: Uuid::new_v4().to_string(), websocket: websocket.clone() };
+            ws_sessions.subscribe(task_group.to_string(), ws_wrapper).await;
 
             let sessions_ref_messages = ws_sessions.clone();
 
@@ -187,10 +181,21 @@ pub mod services {
                             message.to_string(),
                         ).await;
                     }
+
+                    Message::Ping() => {
+                        println!("PING");
+                    }
+
+                    Message::Pong() => {
+                        println!("PONG");
+                    }
+
                     Message::Close(close_code, reason) => {
                         println!("WS connection closed. Code: {} Reason: {}", close_code, reason);
                     }
-                    _ => {}
+                    _ => {
+                        println!("Others");
+                    }
                 }
             }
         }
@@ -203,7 +208,7 @@ pub mod services {
         async fn handle_received_message(db_wrapper: DBWrapper,
                                          tx_image_channels: Sender<BackgroundRemoverTask>,
                                          task_group: &Uuid,
-                                         ws_sessions: Arc<Mutex<HashMap<String, Websocket>>>,
+                                         ws_connections: WebSocketConnections,
                                          message: String) {
             log::debug!("Received from websocket client: {}", message);
 
@@ -220,7 +225,7 @@ pub mod services {
                         None,
                         None,
                     );
-                    send_message(task_group, ws_sessions, error_response).await;
+                    send_message(task_group, ws_connections, error_response).await;
                     return;
                 }
             };
@@ -245,7 +250,7 @@ pub mod services {
                         None,
                     );
 
-                    send_message(&task_group, ws_sessions, error_response).await;
+                    send_message(&task_group, ws_connections, error_response).await;
                     return;
                 }
             };
@@ -256,13 +261,13 @@ pub mod services {
                 Err(error) => {
                     match error {
                         Error::RowNotFound => {
-                            notify_image_key_does_not_exist(task_group, ws_sessions).await;
+                            notify_image_key_does_not_exist(task_group, ws_connections).await;
                             log::error!("Invalid image key");
                             return;
                         }
                         _ => {
                             log::error!("Failed to fetch background remover instance. Error: {}", error);
-                            notify_internal_server_error(task_group, ws_sessions).await;
+                            notify_internal_server_error(task_group, ws_connections).await;
                             return;
                         }
                     }
@@ -270,7 +275,7 @@ pub mod services {
             };
 
             if task_group.to_string() != background_remover_task.task_group.to_string() {
-                notify_task_id_does_not_match(task_group, ws_sessions).await;
+                notify_task_id_does_not_match(task_group, ws_connections).await;
                 return;
             }
 
@@ -279,7 +284,7 @@ pub mod services {
                 Ok(serialized) => serialized,
                 Err(error) => {
                     log::error!("Failed to serialize background remover task instance. Error: {}", error);
-                    notify_internal_server_error(task_group, ws_sessions).await;
+                    notify_internal_server_error(task_group, ws_connections).await;
                     return;
                 }
             };
@@ -291,7 +296,7 @@ pub mod services {
             // Checks if image is already processed or not
             // If process hard is set, it sends for processing again.
             if is_already_processed && !is_process_hard {
-                notify_image_already_processed(task_group, serialized, ws_sessions).await;
+                notify_image_already_processed(task_group, serialized, ws_connections).await;
             } else {
                 // Update processing result
                 log::info!("Updating processing state");
@@ -299,7 +304,7 @@ pub mod services {
 
                 log::info!("Sending image for processing to tx_image_channels");
                 let _ = tx_image_channels.send(background_remover_task).await;
-                notify_image_processing(task_group, serialized, ws_sessions).await;
+                notify_image_processing(task_group, serialized, ws_connections).await;
             }
         }
 
@@ -322,7 +327,7 @@ pub mod services {
         /// Sends generic  `INTERNAL_SERVER_ERROR` response to the websocket client.
         ///
         pub async fn notify_internal_server_error(task_group: &Uuid,
-                                                  ws_sessions: Arc<Mutex<HashMap<String, Websocket>>>) {
+                                                  ws_connections: WebSocketConnections) {
             let response = build_standard_response(
                 "failed",
                 "internal_server_error",
@@ -331,7 +336,7 @@ pub mod services {
                 None,
             );
 
-            send_message(task_group, ws_sessions, response).await;
+            send_message(task_group, ws_connections, response).await;
         }
 
         ///
@@ -340,7 +345,7 @@ pub mod services {
         /// different task_group.
         ///
         pub async fn notify_task_id_does_not_match(task_group: &Uuid,
-                                                   ws_sessions: Arc<Mutex<HashMap<String, Websocket>>>) {
+                                                   ws_connections: WebSocketConnections) {
             let response = build_standard_response(
                 "failed",
                 "mismatched_task_group",
@@ -349,14 +354,14 @@ pub mod services {
                 None,
             );
 
-            send_message(task_group, ws_sessions, response).await;
+            send_message(task_group, ws_connections, response).await;
         }
 
         ///
         /// Sends image key does not exist message to the websocket client.
         ///
         pub async fn notify_image_key_does_not_exist(task_group: &Uuid,
-                                                     ws_sessions: Arc<Mutex<HashMap<String, Websocket>>>) {
+                                                     ws_connections: WebSocketConnections) {
             let response = build_standard_response(
                 "failed",
                 "invalid_image_key",
@@ -365,14 +370,14 @@ pub mod services {
                 None,
             );
 
-            send_message(task_group, ws_sessions, response).await;
+            send_message(task_group, ws_connections, response).await;
         }
 
         ///
         /// Sends image already processed message with serialized task instance to the websocket client.
         ///
         pub async fn notify_image_already_processed(task_group: &Uuid, serialized_data: Value,
-                                                    ws_sessions: Arc<Mutex<HashMap<String, Websocket>>>) {
+                                                    ws_connections: WebSocketConnections) {
             let response = build_standard_response(
                 "success",
                 "result",
@@ -381,14 +386,14 @@ pub mod services {
                 None,
             );
 
-            send_message(task_group, ws_sessions, response).await;
+            send_message(task_group, ws_connections, response).await;
         }
 
         ///
         /// Sends image is processing message with serialized task instance to the websocket client.
         ///
         pub async fn notify_image_processing(task_group: &Uuid, serialized_data: Value,
-                                             ws_sessions: Arc<Mutex<HashMap<String, Websocket>>>) {
+                                             ws_connections: WebSocketConnections) {
             let response = build_standard_response(
                 "pending",
                 "result",
@@ -397,7 +402,7 @@ pub mod services {
                 None,
             );
 
-            send_message(task_group, ws_sessions, response).await;
+            send_message(task_group, ws_connections, response).await;
         }
     }
 }

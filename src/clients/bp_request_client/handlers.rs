@@ -264,19 +264,22 @@ async fn broadcast_ws(task_group: &Uuid, message: Value, shared_data: Arc<Respon
     let mut sessions = shared_data.websocket_connections.sessions
         .lock().await;
 
-    if let Some(session) = sessions.get_mut(&task_group.to_string()) {
+    if let Some(ws_wrappers) = sessions.get_mut(&task_group.to_string()) {
         log::debug!("WS client found in ws sessions by task id(key): {}", task_group);
-        match session.send_json(&message).await {
-            Ok(()) => {
-                log::debug!("Sent from handler to websocket client: {}", message);
-            }
-            Err(closed) => {
-                log::debug!(
+
+        for ws_wrapper in ws_wrappers.iter() {
+            match ws_wrapper.websocket.send_json(&message).await {
+                Ok(()) => {
+                    log::debug!("Sent from handler to websocket client: {}", message);
+                }
+                Err(closed) => {
+                    log::debug!(
                     "Failed to send message to ws client. Connection closed. More info: {}",
                     closed
                 );
-            }
-        };
+                }
+            };
+        }
     } else {
         log::error!("Keys: {:?} Searched {:?}", sessions.keys(), task_group);
         log::debug!("WS client not found. May be connection no more exist. Task id: {}", task_group);

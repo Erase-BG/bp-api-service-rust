@@ -234,12 +234,9 @@ pub async fn ws_view(mut request: Request) -> Response {
     };
 
     let shared_context = request.context::<SharedContext>().unwrap();
-    listen_ws_message(shared_context, &task_group, &mut websocket).await;
+    listen_ws_message(shared_context.clone(), &task_group, &mut websocket).await;
 
-    // Removes from ws_sessions list since its disconnected.
-    let ws_sessions_ref = shared_context.websocket_connections.sessions.clone();
-    let mut ws_sessions = ws_sessions_ref.lock().await;
-    ws_sessions.remove(&task_group.to_string());
-
+    let ws_connections = shared_context.websocket_connections.clone();
+    ws_connections.unsubscribe(&task_group.to_string(), &websocket.uid).await;
     websocket.response()
 }

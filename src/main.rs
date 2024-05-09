@@ -39,12 +39,46 @@ use crate::implementations::websocket::services::task::send_new_task_to_bp_serve
 use crate::routes::{public_upload_view, task_details_view, ws_view};
 
 
+pub struct WSWrapper {
+    pub uid: String,
+    pub websocket: Websocket,
+}
+
 ///
 /// Holds connected websocket sessions
 ///
 pub struct WebSocketConnections {
     /// Task Group and WebSocket session
-    pub sessions: Arc<Mutex<HashMap<String, Websocket>>>,
+    sessions: Arc<Mutex<HashMap<String, Vec<WSWrapper>>>>,
+}
+
+impl WebSocketConnections {
+    pub async fn subscribe(&self, task_group: String, ws_wrapper: WSWrapper) {
+        let mut sessions = self.sessions.lock().await;
+
+        if let Some(ws_wrappers) = sessions.get_mut(&task_group) {
+            ws_wrappers.push(ws_wrapper);
+        } else {
+            sessions.insert(task_group, vec![ws_wrapper]);
+        }
+    }
+
+    pub async fn unsubscribe(&self, task_group: &String, uid: &String) {
+        let mut sessions = self.sessions.lock().await;
+
+        if let Some(ws_wrappers) = sessions.get_mut(task_group) {
+            let mut index = 0;
+
+            while index < ws_wrappers.len() {
+                let ws_wrapper = &ws_wrappers[index];
+                if ws_wrapper.uid.eq(uid) {
+                    ws_wrappers.remove(index);
+                }
+
+                index += 1;
+            }
+        }
+    }
 }
 
 ///
@@ -80,13 +114,13 @@ pub struct ResponseHandlerSharedData {
 
 ///
 /// From API endpoint image is uploaded and transmitter is triggered.
-/// If new background removal task is received, it will be sent the background processing
+/// If new background removal task is received, it will be sent to the background processing
 /// server.
 ///
 /// The result is received in `BPRequestClient` listen function.
 ///
 async fn new_image_uploaded(tx_tcp_stream: Arc<Mutex<Option<TcpStream>>>,
-                            sessions: Arc<Mutex<HashMap<String, Websocket>>>)
+                            ws_connections: WebSocketConnections)
                             -> Sender<BackgroundRemoverTask> {
     let (tx, mut rx): (Sender<BackgroundRemoverTask>, Receiver<BackgroundRemoverTask>) = mpsc::channel(100);
     let tcp_stream_ref = tx_tcp_stream.clone();
@@ -98,7 +132,7 @@ async fn new_image_uploaded(tx_tcp_stream: Arc<Mutex<Option<TcpStream>>>,
             let new_background_removal_task = rx.recv().await;
 
             if let Some(instance) = new_background_removal_task {
-                send_new_task_to_bp_server(tcp_stream_ref_clone, instance, sessions.clone()).await;
+                send_new_task_to_bp_server(tcp_stream_ref_clone, instance, ws_connections.clone()).await;
             }
         }
     });
@@ -154,7 +188,7 @@ async fn init_app_data() -> Result<(SharedContext, BPRequestClient), String> {
     // Sender for uploading image
     let tx_image_mpsc_channel = new_image_uploaded(
         bp_request_client.tx_tcp_stream.clone(),
-        websocket_connections.sessions.clone(),
+        websocket_connections.clone(),
     ).await;
 
     let db_wrapper = DBWrapper {
@@ -216,24 +250,14 @@ async fn main() -> std::io::Result<()> {
     ];
 
     async fn middleware(request: Request, view: Option<View>) -> Response {
-        println!("-----------In------------------");
-        println!("{:?} {:?}", request.method, request.path);
-        for (k, v) in &request.headers {
-            println!("{}: {:?}", k, String::from_utf8_lossy(&v[0]));
-        }
-        // println!("{:?}", request.headers);
-        println!("-------------------------------");
-
-        println!("---------response --------------");
         let mut response = Path::resolve(request, view).await;
         let mut headers = response.get_headers();
         headers.insert_single_value("Access-Control-Allow-Origin", b"*");
         headers.insert_single_value("Access-Control-Allow-Methods", b"GET, POST, PUT, DELETE");
-        println!("Response: {:?}", String::from_utf8_lossy(&response.get_body()));
         response
     }
 
-    let server = Server::bind("127.0.0.1:8080")
+    let server = Server::bind("0.0.0.0:8080")
         .context(app_data)
         .wrap(wrap_view!(middleware))
         .urls(paths)

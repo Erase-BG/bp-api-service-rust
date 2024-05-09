@@ -77,15 +77,10 @@ impl BPRequestClient {
 
         tokio::spawn(async move {
             loop {
-                let response = block_in_place(|| decode_tcp_stream(&mut stream).unwrap());
+                let mut stream = stream.try_clone().unwrap();
+                let response = tokio::task::spawn_blocking(move || decode_tcp_stream(&mut stream).unwrap()).await.unwrap();
+                log::info!("RECEIVED:  {}", String::from_utf8_lossy(&response.message));
                 handle_response_received_from_server(response, app_data.clone()).await;
-                // match BackgroundRemoverTask::update_task(db_wrapper.clone(), &update_task).await {
-                //     Ok(_) => {}
-                //     Err(error) => {
-                //         log::error!("Failed to update task in database. Error {}", error);
-                //         return;
-                //     }
-                // }
             }
         });
     }
@@ -212,13 +207,17 @@ impl BPRequestClient {
             },
         };
 
-        let path = Path::new(file_path);
-        let filename;
-        if let Some(filename_value) = path.file_name() {
-            filename = filename_value.to_string_lossy().to_string();
-        } else {
-            return Err("Failed to extract filename from path".to_owned());
-        }
+        // let path = Path::new(file_path);
+
+        let filename = "original.jpg";
+        // Note: Bug in decoding filename if non utf-8 character. So temporary fixed with
+        // static filename.
+        // let filename;
+        // if let Some(filename_value) = path.file_name() {
+        //     filename = filename_value.to_string_lossy().to_string();
+        // } else {
+        //     return Err("Failed to extract filename from path".to_owned());
+        // }
 
         let file_bytes_read = match Self::read_file_bytes(file_path) {
             Ok(bytes) => bytes,

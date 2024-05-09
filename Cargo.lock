@@ -1398,6 +1398,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "urlencoding",
+ "uuid",
 ]
 
 [[package]]
