@@ -234,9 +234,9 @@ pub async fn ws_view(mut request: Request) -> Response {
     };
 
     let shared_context = request.context::<SharedContext>().unwrap();
-    listen_ws_message(shared_context.clone(), &task_group, &mut websocket).await;
+    listen_ws_message(shared_context, &task_group, &mut websocket).await;
 
-    let ws_connections = shared_context.websocket_connections.clone();
+    let mut ws_connections = shared_context.websocket_connections.clone();
     ws_connections.unsubscribe(&task_group.to_string(), &websocket.uid).await;
     websocket.response()
 }

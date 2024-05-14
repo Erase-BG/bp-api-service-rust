@@ -1,9 +1,5 @@
 pub mod services {
-    use std::collections::HashMap;
-    use std::sync::{Arc};
-    use racoon::core::websocket::Websocket;
     use serde_json::{Value};
-    use tokio::sync::Mutex;
     use uuid::Uuid;
     use crate::WebSocketConnections;
 
@@ -41,9 +37,8 @@ pub mod services {
                               response: Value) {
         let sessions = ws_connections.sessions.lock().await;
 
-        if let Some(ws_wrappers) = sessions.get(&task_group.to_string()) {
-            for ws_wrapper in ws_wrappers.iter() {
-                let websocket = &ws_wrapper.websocket;
+        if let Some(websockets) = sessions.get(&task_group.to_string()) {
+            for websocket in websockets.iter() {
                 let _ = websocket.send_json(&response).await;
             }
         }
@@ -62,7 +57,7 @@ pub mod services {
         use crate::db::models::BackgroundRemoverTask;
         use crate::implementations::websocket::services::build_standard_response;
         use crate::utils::file_utils::media_file_path;
-        use crate::{WebSocketConnections, WSWrapper};
+        use crate::{WebSocketConnections};
 
 
         ///
@@ -112,9 +107,9 @@ pub mod services {
             );
 
             let sessions = ws_connections.sessions.lock().await;
-            if let Some(ws_wrappers) = sessions.get(&instance.task_group.to_string()) {
-                for ws_wrapper in ws_wrappers.iter() {
-                    match ws_wrapper.websocket.send_json(&response).await {
+            if let Some(websockets) = sessions.get(&instance.task_group.to_string()) {
+                for websocket in websockets.iter() {
+                    match websocket.send_json(&response).await {
                         Ok(_) => {
                             log::info!("Sent server error message");
                         }
@@ -149,7 +144,7 @@ pub mod services {
         use crate::db::DBWrapper;
         use crate::db::models::{BackgroundRemoverTask};
 
-        use crate::{SharedContext, WebSocketConnections, WSWrapper};
+        use crate::{SharedContext, WebSocketConnections};
         use crate::implementations::websocket::services::{build_standard_response, send_message};
 
         ///
@@ -165,8 +160,7 @@ pub mod services {
 
             // Inserts the current websocket session to the HashMap.
             // These websocket sessions will be used by bp_request_client module handler to forward messages.
-            let ws_wrapper = WSWrapper { uid: Uuid::new_v4().to_string(), websocket: websocket.clone() };
-            ws_sessions.subscribe(task_group.to_string(), ws_wrapper).await;
+            ws_sessions.subscribe(task_group.to_string(), websocket.clone()).await;
 
             let sessions_ref_messages = ws_sessions.clone();
 

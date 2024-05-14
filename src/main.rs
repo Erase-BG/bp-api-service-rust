@@ -7,7 +7,7 @@ mod implementations;
 
 use std::{env};
 use std::collections::HashMap;
-use std::io::{ErrorKind};
+use std::io::{ErrorKind, Read};
 use std::net::{Shutdown, TcpStream};
 use std::sync::{Arc};
 use std::time::Duration;
@@ -39,27 +39,22 @@ use crate::implementations::websocket::services::task::send_new_task_to_bp_serve
 use crate::routes::{public_upload_view, task_details_view, ws_view};
 
 
-pub struct WSWrapper {
-    pub uid: String,
-    pub websocket: Websocket,
-}
-
 ///
 /// Holds connected websocket sessions
 ///
 pub struct WebSocketConnections {
     /// Task Group and WebSocket session
-    sessions: Arc<Mutex<HashMap<String, Vec<WSWrapper>>>>,
+    sessions: Arc<Mutex<HashMap<String, Vec<Websocket>>>>,
 }
 
 impl WebSocketConnections {
-    pub async fn subscribe(&self, task_group: String, ws_wrapper: WSWrapper) {
+    pub async fn subscribe(&self, task_group: String, websocket: Websocket) {
         let mut sessions = self.sessions.lock().await;
 
         if let Some(ws_wrappers) = sessions.get_mut(&task_group) {
-            ws_wrappers.push(ws_wrapper);
+            ws_wrappers.push(websocket);
         } else {
-            sessions.insert(task_group, vec![ws_wrapper]);
+            sessions.insert(task_group, vec![websocket]);
         }
     }
 
@@ -71,6 +66,7 @@ impl WebSocketConnections {
 
             while index < ws_wrappers.len() {
                 let ws_wrapper = &ws_wrappers[index];
+
                 if ws_wrapper.uid.eq(uid) {
                     ws_wrappers.remove(index);
                 }
@@ -250,6 +246,19 @@ async fn main() -> std::io::Result<()> {
     ];
 
     async fn middleware(request: Request, view: Option<View>) -> Response {
+        println!("Client IP: {:?}", request.remote_addr().await);
+        let pid = std::process::id();
+        let process_fds_dir = format!("/proc/{}/fd", pid);
+        let path = std::fs::read_dir(process_fds_dir);
+        match path {
+            Ok(files) => {
+                println!("---------------------------------------------");
+                println!("Process_id: {} file descriptors: {}", pid, files.count());
+                println!("---------------------------------------------");
+            }
+            _ => {}
+        }
+
         let mut response = Path::resolve(request, view).await;
         let mut headers = response.get_headers();
         headers.insert_single_value("Access-Control-Allow-Origin", b"*");

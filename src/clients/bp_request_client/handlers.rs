@@ -264,11 +264,11 @@ async fn broadcast_ws(task_group: &Uuid, message: Value, shared_data: Arc<Respon
     let mut sessions = shared_data.websocket_connections.sessions
         .lock().await;
 
-    if let Some(ws_wrappers) = sessions.get_mut(&task_group.to_string()) {
+    if let Some(websockets) = sessions.get_mut(&task_group.to_string()) {
         log::debug!("WS client found in ws sessions by task id(key): {}", task_group);
 
-        for ws_wrapper in ws_wrappers.iter() {
-            match ws_wrapper.websocket.send_json(&message).await {
+        for websocket in websockets.iter() {
+            match websocket.send_json(&message).await {
                 Ok(()) => {
                     log::debug!("Sent from handler to websocket client: {}", message);
                 }
