@@ -208,6 +208,38 @@ pub async fn task_details_view(request: Request) -> Response {
     JsonResponse::ok().body(serialized)
 }
 
+///
+/// Endpoint for displaying all the background remover tasks.
+///
+pub async fn tasks_view(mut request: Request) -> Response {
+    let shared_context = request.context::<SharedContext>().unwrap();
+
+    let page_num: u32;
+    if let Some(param_page) = request.query_params.value("page") {
+        // Type casts page string to u32. If fails returns JSON error
+        page_num = match param_page.parse::<u32>() {
+            Ok(value) => value,
+            Err(error) => {
+                log::error!("Page number string to u32 conversion error. Error: {:?}", error);
+                return JsonResponse::bad_request().body(
+                    build_standard_response(
+                        "failed",
+                        "bad_query",
+                        Some("Invalid page format"),
+                        None,
+                        None,
+                    )
+                );
+            }
+        };
+    } else {
+        page_num = 1;
+    }
+
+    let models = BackgroundRemoverTask::fetch_by_page(shared_context.db_wrapper.clone(), page_num);
+    todo!()
+}
+
 pub async fn ws_view(mut request: Request) -> Response {
     let (mut websocket, connected) = Websocket::from(&request).await;
     if !connected {

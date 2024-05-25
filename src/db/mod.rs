@@ -319,18 +319,24 @@ pub mod models {
             Ok(instance)
         }
 
-        pub async fn fetch_by_date_from(db_wrapper: DBWrapper, from_past: &str, to_present: &str) -> Result<Vec<BackgroundRemoverTask>, sqlx::Error> {
+        pub async fn fetch_by_page(db_wrapper: DBWrapper, page: u32) -> Result<BackgroundRemoverTask, sqlx::Error> {
+            todo!()
+        }
+
+        pub async fn fetch_by_date_from(db_wrapper: DBWrapper,
+                                        from_past: &DateTime<Utc>,
+                                        to_present: &DateTime<Utc>,
+        ) -> Result<Vec<BackgroundRemoverTask>, sqlx::Error> {
             let connection = db_wrapper.connection;
 
-            let fetch_query = format!(r#"
+            let fetch_query = r#"
                 SELECT * FROM background_remover_task
-                    WHERE date_created >= NOW() - INTERVAL '{}'
-                    AND date_created <= NOW() - INTERVAL '{}'
-            "#, from_past, to_present);
+                    WHERE date_created BETWEEN $1 AND $2
+            "#;
 
             let models = sqlx::query_as(&fetch_query)
-                .bind(from_past.to_string())
-                .bind(to_present.to_string())
+                .bind(from_past)
+                .bind(to_present)
                 .fetch_all(&connection).await?;
 
             Ok(models)

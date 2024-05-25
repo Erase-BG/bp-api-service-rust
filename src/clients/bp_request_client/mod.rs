@@ -78,17 +78,6 @@ impl BPRequestClient {
         tokio::spawn(async move {
             loop {
                 let mut stream = stream.try_clone().unwrap();
-                let pid = std::process::id();
-                let process_fds_dir = format!("/proc/{}/fd", pid);
-                let path = std::fs::read_dir(process_fds_dir);
-                match path {
-                    Ok(files) => {
-                        println!("---------------------------------------------");
-                        println!("Process_id: {} file descriptors: {}", pid, files.count());
-                        println!("---------------------------------------------");
-                    }
-                    _ => {}
-                }
                 let response = tokio::task::spawn_blocking(move || decode_tcp_stream(&mut stream).unwrap()).await.unwrap();
                 log::info!("RECEIVED:  {}", String::from_utf8_lossy(&response.message));
                 handle_response_received_from_server(response, app_data.clone()).await;
