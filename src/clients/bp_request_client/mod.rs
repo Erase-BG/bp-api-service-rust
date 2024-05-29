@@ -1,9 +1,8 @@
 use std::io::{Read, Write};
 use std::net::TcpStream;
-use std::{env, thread, vec};
-use std::path::Path;
-use std::sync::{Arc};
+use std::sync::Arc;
 use std::time::Duration;
+use std::{env, vec};
 
 use tokio::sync::Mutex;
 use tokio::time::sleep;
@@ -11,17 +10,14 @@ use tokio::time::sleep;
 use tej_protoc::protoc::decoder::decode_tcp_stream;
 use tej_protoc::protoc::encoder::{build_bytes_for_message, build_raw_bytes};
 
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-use chrono::Utc;
-use tokio::task::block_in_place;
 
-use crate::{ResponseHandlerSharedData};
 use crate::clients::bp_request_client::handlers::handle_response_received_from_server;
-use crate::db::models::BackgroundRemoverTask;
+use crate::ResponseHandlerSharedData;
 
 mod handlers;
-
 
 const NORMAL_STATUS: u8 = 1;
 const PING_STATUS: u8 = 2;
@@ -63,24 +59,66 @@ impl BPRequestClient {
     /// If connection fails, `tcp_stream` is set to `None`.
     ///
     pub async fn handle_response(&mut self, app_data: Arc<ResponseHandlerSharedData>) {
-        let mut stream = TcpStream::connect(self.address.clone()).unwrap();
-        Self::handshake(&mut stream);
-
-        let tcp_ref = self.tx_tcp_stream.clone();
-        let mut tcp = tcp_ref.lock().await;
-        *tcp = Some(stream.try_clone().unwrap());
-
-        let ping_ref = tcp_ref.clone();
-        tokio::spawn(async move {
-            let _ = Self::ping(ping_ref).await;
-        });
+        let address = self.address.clone();
+        let tx_tcp_stream = self.tx_tcp_stream.clone();
 
         tokio::spawn(async move {
+            // Reconnect loop
             loop {
-                let mut stream = stream.try_clone().unwrap();
-                let response = tokio::task::spawn_blocking(move || decode_tcp_stream(&mut stream).unwrap()).await.unwrap();
-                log::info!("RECEIVED:  {}", String::from_utf8_lossy(&response.message));
-                handle_response_received_from_server(response, app_data.clone()).await;
+                let mut stream = match TcpStream::connect(address.clone()) {
+                    Ok(stream) => stream,
+                    Err(error) => {
+                        log::error!("Error: {}", error);
+                        log::info!("Reconnecting in 3 seconds...");
+                        sleep(Duration::from_secs(3)).await;
+                        continue;
+                    }
+                };
+
+                Self::handshake(&mut stream);
+                log::info!("Connected");
+
+                let tcp_ref = tx_tcp_stream.clone();
+
+                // Releases tcp_ref lock 
+                {
+                    let mut tcp = tcp_ref.lock().await;
+                    *tcp = Some(stream.try_clone().unwrap());
+                }
+
+                let ping_ref = tcp_ref.clone();
+                tokio::spawn(async move {
+                    let _ = Self::ping(ping_ref).await;
+                });
+
+                // Reader loop
+                loop {
+                    let mut stream = stream.try_clone().unwrap();
+                    let read_result =
+                        tokio::task::spawn_blocking(move || decode_tcp_stream(&mut stream)).await;
+
+                    let response_result = match read_result {
+                        Ok(response_result) => response_result,
+                        Err(error) => {
+                            log::error!("Async task join error. Error: {}", error);
+                            break;
+                        }
+                    };
+
+                    match response_result {
+                        Ok(response) => {
+                            log::info!("RECEIVED:  {}", String::from_utf8_lossy(&response.message));
+                            handle_response_received_from_server(response, app_data.clone()).await;
+                        }
+                        Err(error) => {
+                            log::error!("Failed to read data from bp server. Error: {}", error);
+                            break;
+                        }
+                    }
+                }
+
+                log::info!("Reconnecting in 3 seconds...");
+                sleep(Duration::from_secs(3)).await;
             }
         });
     }
@@ -124,12 +162,7 @@ impl BPRequestClient {
 
     async fn ping(tcp_stream: Arc<Mutex<Option<TcpStream>>>) {
         loop {
-            let ping_bytes = build_raw_bytes(
-                PING_STATUS,
-                PROTOCOL_VERSION,
-                &vec![],
-                &vec![],
-            );
+            let ping_bytes = build_raw_bytes(PING_STATUS, PROTOCOL_VERSION, &vec![], &vec![]);
 
             {
                 let mut lock = tcp_stream.lock().await;
@@ -149,29 +182,6 @@ impl BPRequestClient {
             }
 
             sleep(Duration::from_secs(2)).await;
-        };
-    }
-
-    ///
-    /// This will call the mutable closure when new data is received from the server.
-    ///
-    /// If decoding response is failed, the function returns void.
-    ///
-    async fn handle_bytes_read(mut tcp_stream: TcpStream, shared_data: Arc<ResponseHandlerSharedData>) {
-        loop {
-            let decoded_response = decode_tcp_stream(&mut tcp_stream);
-            match decoded_response {
-                Ok(decoded_response) => {
-                    println!("Received: {:?}", String::from_utf8_lossy(&decoded_response.message));
-                    handle_response_received_from_server(decoded_response, shared_data.clone()).await;
-                }
-
-                Err(error) => {
-                    log::error!("Error: {}", error);
-                    break;
-                }
-            }
-            sleep(Duration::from_millis(100)).await;
         }
     }
 
@@ -183,23 +193,20 @@ impl BPRequestClient {
 
                 // Reads file to end and put it in the buffer
                 match &file.read_to_end(&mut buffer) {
-                    Ok(_) => {
-                        Ok(buffer)
-                    }
-                    Err(error) => {
-                        Err(error.to_string())
-                    }
+                    Ok(_) => Ok(buffer),
+                    Err(error) => Err(error.to_string()),
                 }
             }
 
-            Err(error) => {
-                Err(error.to_string())
-            }
+            Err(error) => Err(error.to_string()),
         };
     }
 
-    pub async fn send_remove_task(tcp_stream: Arc<Mutex<Option<TcpStream>>>, task_id: Uuid,
-                                  file_path: &str) -> Result<(), String> {
+    pub async fn send_remove_task(
+        tcp_stream: Arc<Mutex<Option<TcpStream>>>,
+        task_id: Uuid,
+        file_path: &str,
+    ) -> Result<(), String> {
         let request_message = RequestRemoveTask {
             task_id: task_id.to_string(),
             timestamps: Timestamps {
@@ -238,16 +245,16 @@ impl BPRequestClient {
                 }
             };
 
-            let file_bytes = tej_protoc::protoc::File::new(filename.as_bytes().to_vec(), file_bytes_read);
+            let file_bytes =
+                tej_protoc::protoc::File::new(filename.as_bytes().to_vec(), file_bytes_read);
             let files = vec![&file_bytes];
 
             // Response bytes ready to send through stream.
-            let response_bytes = build_raw_bytes(NORMAL_STATUS, PROTOCOL_VERSION, &files, &message_bytes);
+            let response_bytes =
+                build_raw_bytes(NORMAL_STATUS, PROTOCOL_VERSION, &files, &message_bytes);
 
             return match tcp_stream.write_all(&response_bytes) {
-                Ok(()) => {
-                    Ok(())
-                }
+                Ok(()) => Ok(()),
                 Err(error) => {
                     log::error!("Failed to send well formed protoc bytes to TcpStream.");
                     Err(error.to_string())

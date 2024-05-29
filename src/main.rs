@@ -1,43 +1,38 @@
-mod routes;
-mod forms;
-mod utils;
-mod db;
 mod clients;
+mod db;
+mod forms;
 mod implementations;
+mod routes;
+mod utils;
 
-use std::{env};
 use std::collections::HashMap;
-use std::io::{ErrorKind, Read};
-use std::net::{Shutdown, TcpStream};
-use std::sync::{Arc};
+use std::env;
+use std::net::TcpStream;
+use std::sync::Arc;
 use std::time::Duration;
-
-use tokio;
 
 use dotenv::dotenv;
 
+use racoon::core::headers::HeaderValue;
 use racoon::core::path::{Path, View};
 use racoon::core::request::Request;
+use racoon::core::response::Response;
 use racoon::core::server::Server;
 use racoon::core::websocket::Websocket;
 use racoon::{view, wrap_view};
-use racoon::core::headers::HeaderValue;
-use racoon::core::response::Response;
 
-use tokio::signal::unix::{signal, SignalKind};
-use tokio::sync::{mpsc, Mutex};
 use tokio::sync::mpsc::{Receiver, Sender};
+use tokio::sync::{mpsc, Mutex};
 
-use sqlx::{PgPool};
+use sqlx::PgPool;
 
 use crate::clients::bp_request_client::BPRequestClient;
 
+use crate::db::models::BackgroundRemoverTask;
 use crate::db::DBWrapper;
-use crate::db::models::{BackgroundRemoverTask};
 
 use crate::implementations::websocket::services::task::send_new_task_to_bp_server;
-use crate::routes::{public_upload_view, task_details_view, ws_view};
-
+use crate::routes::{public_upload_view, task_details_view, tasks_view, ws_view};
 
 ///
 /// Holds connected websocket sessions
@@ -83,7 +78,7 @@ impl WebSocketConnections {
 impl Clone for WebSocketConnections {
     fn clone(&self) -> Self {
         Self {
-            sessions: self.sessions.clone()
+            sessions: self.sessions.clone(),
         }
     }
 }
@@ -115,10 +110,14 @@ pub struct ResponseHandlerSharedData {
 ///
 /// The result is received in `BPRequestClient` listen function.
 ///
-async fn new_image_uploaded(tx_tcp_stream: Arc<Mutex<Option<TcpStream>>>,
-                            ws_connections: WebSocketConnections)
-                            -> Sender<BackgroundRemoverTask> {
-    let (tx, mut rx): (Sender<BackgroundRemoverTask>, Receiver<BackgroundRemoverTask>) = mpsc::channel(100);
+async fn new_image_uploaded(
+    tx_tcp_stream: Arc<Mutex<Option<TcpStream>>>,
+    ws_connections: WebSocketConnections,
+) -> Sender<BackgroundRemoverTask> {
+    let (tx, mut rx): (
+        Sender<BackgroundRemoverTask>,
+        Receiver<BackgroundRemoverTask>,
+    ) = mpsc::channel(100);
     let tcp_stream_ref = tx_tcp_stream.clone();
 
     // Spawning new task for receiving new tasks in background
@@ -128,7 +127,8 @@ async fn new_image_uploaded(tx_tcp_stream: Arc<Mutex<Option<TcpStream>>>,
             let new_background_removal_task = rx.recv().await;
 
             if let Some(instance) = new_background_removal_task {
-                send_new_task_to_bp_server(tcp_stream_ref_clone, instance, ws_connections.clone()).await;
+                send_new_task_to_bp_server(tcp_stream_ref_clone, instance, ws_connections.clone())
+                    .await;
             }
         }
     });
@@ -176,16 +176,14 @@ async fn init_app_data() -> Result<(SharedContext, BPRequestClient), String> {
     }
 
     // BP Request Client instance
-    let bp_request_client = BPRequestClient::new(
-        bp_server_host,
-        Duration::from_secs(2),
-    );
+    let bp_request_client = BPRequestClient::new(bp_server_host, Duration::from_secs(2));
 
     // Sender for uploading image
     let tx_image_mpsc_channel = new_image_uploaded(
         bp_request_client.tx_tcp_stream.clone(),
         websocket_connections.clone(),
-    ).await;
+    )
+    .await;
 
     let db_wrapper = DBWrapper {
         connection: db_pool,
@@ -220,19 +218,20 @@ async fn main() -> std::io::Result<()> {
     match db::setup(app_data.db_wrapper.clone()).await {
         Ok(()) => {}
         Err(error) => {
-            return Err(std::io::Error::new(ErrorKind::Other, error));
+            return Err(std::io::Error::other(error));
         }
     };
 
     // Data required for before and after response from server are kept here
-    let response_handler_shared_data = Arc::new(
-        ResponseHandlerSharedData {
-            db_wrapper: app_data.db_wrapper.clone(),
-            websocket_connections: app_data.websocket_connections.clone(),
-        });
+    let response_handler_shared_data = Arc::new(ResponseHandlerSharedData {
+        db_wrapper: app_data.db_wrapper.clone(),
+        websocket_connections: app_data.websocket_connections.clone(),
+    });
 
     // Runs in the background
-    client.handle_response(response_handler_shared_data.clone()).await;
+    client
+        .handle_response(response_handler_shared_data.clone())
+        .await;
 
     let db_wrapper_delete_scheduler = response_handler_shared_data.db_wrapper.clone();
     tokio::spawn(async move {
@@ -241,7 +240,11 @@ async fn main() -> std::io::Result<()> {
 
     let paths = vec![
         Path::new("/v1/bp/u/", view!(public_upload_view)),
-        Path::new("/v1/remove-background/details/{task_id}/", view!(task_details_view)),
+        Path::new(
+            "/v1/remove-background/details/{task_id}/",
+            view!(task_details_view),
+        ),
+        Path::new("/v1/remove-tasks/", view!(tasks_view)),
         Path::new("/ws/remove-background/{task_group}/", view!(ws_view)),
     ];
 
@@ -260,7 +263,7 @@ async fn main() -> std::io::Result<()> {
         }
 
         let mut response = Path::resolve(request, view).await;
-        let mut headers = response.get_headers();
+        let headers = response.get_headers();
         headers.insert_single_value("Access-Control-Allow-Origin", b"*");
         headers.insert_single_value("Access-Control-Allow-Methods", b"GET, POST, PUT, DELETE");
         response
@@ -270,7 +273,8 @@ async fn main() -> std::io::Result<()> {
         .context(app_data)
         .wrap(wrap_view!(middleware))
         .urls(paths)
-        .run().await;
+        .run()
+        .await;
 
     println!("Result: {:?}", server);
     Ok(())

@@ -7,7 +7,6 @@ pub struct DBWrapper {
     pub connection: PgPool,
 }
 
-
 ///
 /// Clone trait implementation for thread safe passing.
 ///
@@ -18,7 +17,6 @@ impl Clone for DBWrapper {
         }
     }
 }
-
 
 // Table creation query
 const CREATE_TABLE_BACKGROUND_REMOVER_TASK_SQL: &str = r#"
@@ -40,44 +38,38 @@ const CREATE_TABLE_BACKGROUND_REMOVER_TASK_SQL: &str = r#"
     )
 "#;
 
-
 ///
 /// Configures initial database operations such as creating a table if not exist.
 ///
 pub async fn setup(db_wrapper: DBWrapper) -> Result<(), sqlx::Error> {
     let connection = db_wrapper.connection;
-    connection.execute(CREATE_TABLE_BACKGROUND_REMOVER_TASK_SQL).await?;
+    connection
+        .execute(CREATE_TABLE_BACKGROUND_REMOVER_TASK_SQL)
+        .await?;
     Ok(())
 }
 
 pub mod models {
     use std::fmt::Debug;
 
+    use serde::ser::SerializeStruct;
     use serde::{Serialize, Serializer};
-    use serde::ser::{SerializeStruct};
     use serde_json::Value;
 
-    use sqlx::{Executor, Row};
     use sqlx::types::chrono::Utc;
-    use sqlx::types::JsonValue;
+    use sqlx::Executor;
 
-    use chrono::{DateTime};
-    use futures_util::TryStreamExt;
+    use chrono::DateTime;
     use serde::de::Error;
-    use sqlx::postgres::PgRow;
     use uuid::Uuid;
 
-    use crate::db::{DBWrapper};
-    use crate::utils::urls::{
-        path_to_full_media_url,
-        path_to_absolute_media_url_optional,
-    };
+    use crate::db::DBWrapper;
+    use crate::utils::urls::{path_to_absolute_media_url_optional, path_to_full_media_url};
 
     ///
     /// This struct is the mapped columns of table `background_remover_task`.
     ///
-    #[derive(Debug)]
-    #[derive(sqlx::FromRow)]
+    #[derive(Debug, sqlx::FromRow)]
     pub struct BackgroundRemoverTask {
         pub task_id: i64,
         pub date_created: DateTime<Utc>,
@@ -97,9 +89,11 @@ pub mod models {
     /// Serde JSON custom serialize implementation. It modifies field values for `path` fields.
     ///
     impl Serialize for BackgroundRemoverTask {
-        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error> where S: Serializer {
-            let mut state = serializer.serialize_struct(
-                "BackgroundRemoverTask", 11)?;
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: Serializer,
+        {
+            let mut state = serializer.serialize_struct("BackgroundRemoverTask", 11)?;
             state.serialize_field("task_id", &self.task_id)?;
             state.serialize_field("date_created", &self.date_created.to_string())?;
             state.serialize_field("key", &self.key)?;
@@ -216,14 +210,18 @@ pub mod models {
                 return Ok(Value::from(map.clone()));
             }
 
-            return Err(serde_json::Error::custom("Failed to parse while removing some fields."));
+            return Err(serde_json::Error::custom(
+                "Failed to parse while removing some fields.",
+            ));
         }
 
         ///
         /// Inserts new record to the database.
         ///
-        pub async fn insert_new_task(db_wrapper: DBWrapper, new_task: &NewBackgroundRemoverTask)
-                                     -> Result<(), sqlx::Error> {
+        pub async fn insert_new_task(
+            db_wrapper: DBWrapper,
+            new_task: &NewBackgroundRemoverTask,
+        ) -> Result<(), sqlx::Error> {
             let connection = db_wrapper.connection;
 
             const INSERT_QUERY: &str = r#"
@@ -237,15 +235,17 @@ pub mod models {
                 ) VALUES ($1, $2, $3, $4, $5, $6)
             "#;
 
-            connection.execute(
-                sqlx::query(&INSERT_QUERY)
-                    .bind(&new_task.key)
-                    .bind(&new_task.task_group)
-                    .bind(&new_task.original_image_path)
-                    .bind(&new_task.preview_original_image_path)
-                    .bind(&new_task.country.clone())
-                    .bind(&new_task.user_identifier.clone())
-            ).await?;
+            connection
+                .execute(
+                    sqlx::query(&INSERT_QUERY)
+                        .bind(&new_task.key)
+                        .bind(&new_task.task_group)
+                        .bind(&new_task.original_image_path)
+                        .bind(&new_task.preview_original_image_path)
+                        .bind(&new_task.country.clone())
+                        .bind(&new_task.user_identifier.clone()),
+                )
+                .await?;
 
             Ok(())
         }
@@ -253,8 +253,10 @@ pub mod models {
         ///
         /// Updates existing record in the database of matching `key`.
         ///
-        pub async fn update_task(db_wrapper: DBWrapper, update_task: &UpdateBackgroundRemoverTask)
-                                 -> Result<(), sqlx::Error> {
+        pub async fn update_task(
+            db_wrapper: DBWrapper,
+            update_task: &UpdateBackgroundRemoverTask,
+        ) -> Result<(), sqlx::Error> {
             let connection = db_wrapper.connection;
 
             const UPDATE_QUERY: &str = r#"
@@ -268,22 +270,27 @@ pub mod models {
                     key=$5
             "#;
 
-            connection.execute(
-                sqlx::query(UPDATE_QUERY)
-                    .bind(&update_task.mask_image_path)
-                    .bind(&update_task.processed_image_path)
-                    .bind(&update_task.preview_processed_image_path)
-                    .bind(&update_task.logs)
-                    .bind(&update_task.key)
-            ).await?;
+            connection
+                .execute(
+                    sqlx::query(UPDATE_QUERY)
+                        .bind(&update_task.mask_image_path)
+                        .bind(&update_task.processed_image_path)
+                        .bind(&update_task.preview_processed_image_path)
+                        .bind(&update_task.logs)
+                        .bind(&update_task.key),
+                )
+                .await?;
             Ok(())
         }
 
         ///
         /// Updates processing state of the task.
         ///
-        pub async fn update_processing_state(db_wrapper: DBWrapper, key: &Uuid, state: bool)
-                                             -> Result<(), sqlx::Error> {
+        pub async fn update_processing_state(
+            db_wrapper: DBWrapper,
+            key: &Uuid,
+            state: bool,
+        ) -> Result<(), sqlx::Error> {
             let connection = db_wrapper.connection;
 
             const UPDATE_QUERY: &str = r#"
@@ -294,19 +301,19 @@ pub mod models {
                     key=$2
             "#;
 
-            connection.execute(
-                sqlx::query(UPDATE_QUERY)
-                    .bind(state)
-                    .bind(key)
-            ).await?;
+            connection
+                .execute(sqlx::query(UPDATE_QUERY).bind(state).bind(key))
+                .await?;
             Ok(())
         }
 
         ///
         /// Returns instance of `BackgroundRemoverTask` of matching `key`.
         ///
-        pub async fn fetch(db_wrapper: DBWrapper, key: &Uuid)
-                           -> Result<BackgroundRemoverTask, sqlx::Error> {
+        pub async fn fetch(
+            db_wrapper: DBWrapper,
+            key: &Uuid,
+        ) -> Result<BackgroundRemoverTask, sqlx::Error> {
             let connection = db_wrapper.connection;
             const FETCH_QUERY: &str = r#"
                 SELECT * FROM background_remover_task WHERE key=$1 LIMIT 1
@@ -314,18 +321,50 @@ pub mod models {
 
             let instance: BackgroundRemoverTask = sqlx::query_as(FETCH_QUERY)
                 .bind(key)
-                .fetch_one(&connection).await?;
+                .fetch_one(&connection)
+                .await?;
 
             Ok(instance)
         }
 
-        pub async fn fetch_by_page(db_wrapper: DBWrapper, page: u32) -> Result<BackgroundRemoverTask, sqlx::Error> {
-            todo!()
+        pub async fn fetch_by_page(
+            db_wrapper: DBWrapper,
+            page: u32,
+        ) -> Result<Vec<BackgroundRemoverTask>, sqlx::Error> {
+            let connection = db_wrapper.connection;
+            let tasks_per_page = 25;
+            let offset = (page - 1) * tasks_per_page;
+
+            const FETCH_QUERY: &str = r#"
+                SELECT * FROM background_remover_task
+                    ORDER BY task_id DESC
+                    OFFSET $1
+                    LIMIT $2
+            "#;
+
+            let models: Vec<BackgroundRemoverTask> = sqlx::query_as(FETCH_QUERY)
+                .bind(offset as i64)
+                .bind(tasks_per_page as i64)
+                .fetch_all(&connection)
+                .await?;
+
+            Ok(models)
         }
 
-        pub async fn fetch_by_date_from(db_wrapper: DBWrapper,
-                                        from_past: &DateTime<Utc>,
-                                        to_present: &DateTime<Utc>,
+        pub async fn length(db_wrapper: DBWrapper) -> Result<u64, sqlx::Error> {
+            let connection = db_wrapper.connection;
+            const COUNT_QUERY: &str = r#"
+                SELECT COUNT(task_id) AS total FROM background_remover_task
+            "#;
+
+            let size: (i64, ) = sqlx::query_as(COUNT_QUERY).fetch_one(&connection).await?;
+            Ok(size.0 as u64)
+        }
+
+        pub async fn fetch_by_date_from(
+            db_wrapper: DBWrapper,
+            from_past: &DateTime<Utc>,
+            to_present: &DateTime<Utc>,
         ) -> Result<Vec<BackgroundRemoverTask>, sqlx::Error> {
             let connection = db_wrapper.connection;
 
@@ -337,7 +376,8 @@ pub mod models {
             let models = sqlx::query_as(&fetch_query)
                 .bind(from_past)
                 .bind(to_present)
-                .fetch_all(&connection).await?;
+                .fetch_all(&connection)
+                .await?;
 
             Ok(models)
         }
