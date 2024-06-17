@@ -45,12 +45,11 @@ pub mod services {
     }
 
     pub mod task {
-        use std::collections::HashMap;
         use std::net::TcpStream;
         use std::path::PathBuf;
         use std::sync::Arc;
 
-        use racoon::core::websocket::Websocket;
+        use racoon::core::websocket::WebSocket;
         use tokio::sync::Mutex;
 
         use crate::clients::bp_request_client::BPRequestClient;
@@ -129,13 +128,10 @@ pub mod services {
     /// Websocket functions implementation logic related to background remover task.
     ///
     pub mod task_ws {
-        use std::collections::HashMap;
         use std::env;
-        use std::sync::Arc;
-        use racoon::core::websocket::{Message, Websocket};
+        use racoon::core::websocket::{Message, WebSocket};
 
         use tokio::sync::mpsc::Sender;
-        use tokio::sync::Mutex;
 
         use serde_json::Value;
         use sqlx::Error;
@@ -155,7 +151,7 @@ pub mod services {
         /// If `key` is sent as message, it starts processing the task with that key. If env variable
         /// `HARD_PROCESS` is not set to `true`, it sends already processed result to the `ws_session` .
         ///
-        pub async fn listen_ws_message(shared_context: &SharedContext, task_group: &Uuid, websocket: &mut Websocket) {
+        pub async fn listen_ws_message(shared_context: &SharedContext, task_group: &Uuid, websocket: &mut WebSocket) {
             let ws_sessions = shared_context.websocket_connections.clone();
 
             // Inserts the current websocket session to the HashMap.

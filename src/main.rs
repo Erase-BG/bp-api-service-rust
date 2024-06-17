@@ -18,7 +18,7 @@ use racoon::core::path::{Path, View};
 use racoon::core::request::Request;
 use racoon::core::response::Response;
 use racoon::core::server::Server;
-use racoon::core::websocket::Websocket;
+use racoon::core::websocket::WebSocket;
 use racoon::{view, wrap_view};
 
 use tokio::sync::mpsc::{Receiver, Sender};
@@ -39,11 +39,11 @@ use crate::routes::{public_upload_view, task_details_view, tasks_view, ws_view};
 ///
 pub struct WebSocketConnections {
     /// Task Group and WebSocket session
-    sessions: Arc<Mutex<HashMap<String, Vec<Websocket>>>>,
+    sessions: Arc<Mutex<HashMap<String, Vec<WebSocket>>>>,
 }
 
 impl WebSocketConnections {
-    pub async fn subscribe(&self, task_group: String, websocket: Websocket) {
+    pub async fn subscribe(&self, task_group: String, websocket: WebSocket) {
         let mut sessions = self.sessions.lock().await;
 
         if let Some(ws_wrappers) = sessions.get_mut(&task_group) {
@@ -264,12 +264,12 @@ async fn main() -> std::io::Result<()> {
 
         let mut response = Path::resolve(request, view).await;
         let headers = response.get_headers();
-        headers.insert_single_value("Access-Control-Allow-Origin", b"*");
-        headers.insert_single_value("Access-Control-Allow-Methods", b"GET, POST, PUT, DELETE");
+        headers.set("Access-Control-Allow-Origin", "*");
+        headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE");
         response
     }
 
-    let server = Server::bind("0.0.0.0:8080")
+    let server = Server::bind("0.0.0.0:1234")
         .context(app_data)
         .wrap(wrap_view!(middleware))
         .urls(paths)

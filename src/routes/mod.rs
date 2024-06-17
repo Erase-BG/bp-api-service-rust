@@ -1,15 +1,17 @@
 use std::path::PathBuf;
 use std::str::FromStr;
+use std::time::Duration;
 
 use racoon::core::forms::{Files, FormData};
 use racoon::core::request::Request;
 use racoon::core::response::status::ResponseStatus;
-use racoon::core::response::{JsonResponse, Response};
+use racoon::core::response::{HttpResponse, JsonResponse, Response};
 use racoon::core::shortcuts::SingleText;
-use racoon::core::websocket::Websocket;
+use racoon::core::websocket::WebSocket;
 
 use serde_json::json;
 
+use tokio::time::sleep;
 use uuid::Uuid;
 
 use crate::db::models::{BackgroundRemoverTask, NewBackgroundRemoverTask};
@@ -333,10 +335,31 @@ pub async fn tasks_view(mut request: Request) -> Response {
 }
 
 pub async fn ws_view(request: Request) -> Response {
-    let (mut websocket, connected) = Websocket::from(&request).await;
+    let (mut websocket, connected) = WebSocket::from(&request).await;
+
     if !connected {
-        return websocket.response();
+        println!("failed");
+        return HttpResponse::bad_request().body("Bad");
     }
+
+    let ws2 = websocket.clone();
+    tokio::spawn(async move {
+        ws2.ping_with_interval(Duration::from_secs(10)).await;
+    });
+
+    let ws3 = websocket.clone();
+    tokio::spawn(async move {
+        let mut i = 0;
+        loop {
+            let r = ws3.send_text(i.to_string()).await;
+            if r.is_err() {
+                break;
+            }
+
+            i += 1;
+            sleep(Duration::from_secs(1)).await;
+        }
+    });
 
     println!("Connected ws");
 
