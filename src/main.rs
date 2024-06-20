@@ -269,7 +269,8 @@ async fn main() -> std::io::Result<()> {
         response
     }
 
-    let server = Server::bind("0.0.0.0:1234")
+    let host = env::var("HOST").unwrap();
+    let server = Server::bind(host)
         .context(app_data)
         .wrap(wrap_view!(middleware))
         .urls(paths)
