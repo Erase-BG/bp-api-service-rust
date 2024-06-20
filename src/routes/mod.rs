@@ -2,6 +2,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 use std::time::Duration;
 
+use log::debug;
 use racoon::core::forms::{Files, FormData};
 use racoon::core::request::Request;
 use racoon::core::response::status::ResponseStatus;
@@ -250,7 +251,7 @@ pub async fn task_details_view(request: Request) -> Response {
 ///
 /// Endpoint for displaying all the background remover tasks.
 ///
-pub async fn tasks_view(mut request: Request) -> Response {
+pub async fn tasks_view(request: Request) -> Response {
     let shared_context = request.context::<SharedContext>().unwrap();
 
     let page_num: u32;
@@ -338,30 +339,10 @@ pub async fn ws_view(request: Request) -> Response {
     let (mut websocket, connected) = WebSocket::from(&request).await;
 
     if !connected {
-        println!("failed");
-        return HttpResponse::bad_request().body("Bad");
+        return HttpResponse::bad_request().body("Bad request");
     }
 
-    let ws2 = websocket.clone();
-    tokio::spawn(async move {
-        ws2.ping_with_interval(Duration::from_secs(10)).await;
-    });
-
-    let ws3 = websocket.clone();
-    tokio::spawn(async move {
-        let mut i = 0;
-        loop {
-            let r = ws3.send_text(i.to_string()).await;
-            if r.is_err() {
-                break;
-            }
-
-            i += 1;
-            sleep(Duration::from_secs(1)).await;
-        }
-    });
-
-    println!("Connected ws");
+    log::debug!("Connected ws");
 
     let task_group_value = request.path_params.value("task_group").unwrap();
     let task_group = match Uuid::from_str(task_group_value) {
@@ -392,6 +373,5 @@ pub async fn ws_view(request: Request) -> Response {
 
 async fn login(request: Request) -> Response {
     let context = request.context::<SharedContext>().unwrap();
-
     todo!()
 }
