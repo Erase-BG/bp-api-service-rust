@@ -1,8 +1,6 @@
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::time::Duration;
 
-use log::debug;
 use racoon::core::forms::{Files, FormData};
 use racoon::core::request::Request;
 use racoon::core::response::status::ResponseStatus;
@@ -12,7 +10,6 @@ use racoon::core::websocket::WebSocket;
 
 use serde_json::json;
 
-use tokio::time::sleep;
 use uuid::Uuid;
 
 use crate::db::models::{BackgroundRemoverTask, NewBackgroundRemoverTask};
@@ -336,7 +333,7 @@ pub async fn tasks_view(request: Request) -> Response {
 }
 
 pub async fn ws_view(request: Request) -> Response {
-    let (mut websocket, connected) = WebSocket::from_opt(&request, false).await;
+    let (mut websocket, connected) = WebSocket::from_opt(&request, true).await;
 
     if !connected {
         return HttpResponse::bad_request().body("Bad request");

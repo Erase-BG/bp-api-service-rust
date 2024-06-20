@@ -208,6 +208,9 @@ async fn main() -> std::io::Result<()> {
     env::set_var("RACOON_LOGGING", "true");
     env_logger::init_from_env(env_logger::Env::new().default_filter_or("debug"));
 
+    let sid = env::var("SID").unwrap();
+    println!("SID: {}", sid);
+
     // Initialize app data
     let (app_data, mut client) = init_app_data().await.unwrap_or_else(|error| {
         log::error!("Error: {}", error);
@@ -264,6 +267,8 @@ async fn main() -> std::io::Result<()> {
 
         let mut response = Path::resolve(request, view).await;
         let headers = response.get_headers();
+        let sid = env::var("SID").unwrap();
+        headers.set("SID", sid);
         headers.set("Access-Control-Allow-Origin", "*");
         headers.set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE");
         response
