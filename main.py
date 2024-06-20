@@ -12,11 +12,16 @@ def test():
     task_id = uuid.uuid4()
     task_group = "2322fafb-ba0c-4dcf-932a-d7392817e723"
 
-    response = requests.post("http://127.0.0.1:8080/v1/bp/u/", files={
-        ('original_image', ('original.jpg', open('img.jpg', 'rb').read())),
-        ('task_group', str(task_group)),
-        ('country', str('NP'))
-    })
+    response = requests.post(
+        "http://127.0.0.1:8080/v1/bp/u/",
+        files={
+            'original_image': ('original.jpg', open('img.jpg', 'rb')),
+        },
+        data={
+            'task_group': str(task_group),
+            'country': 'NP'
+        }
+    )
 
     if response.status_code != 200:
         print("Connection failed", response.status_code)
@@ -49,15 +54,16 @@ def test():
     def error(websocket, code):
         print("error: {}", code)
 
-    ws = websocket.WebSocketApp(f"ws://127.0.0.1:8080/ws/remove-background/{task_group}/",
-                                on_open=opeedn,
-                                on_message=message,
-                                on_error=error,
-                                on_close=closed)
-    ws.run_forever(dispatcher=None,
-                   reconnect=5)
-
-
+    #
+    # ws = websocket.WebSocketApp(f"ws://127.0.0.1:8080/ws/remove-background/{task_group}/",
+    #                             on_open=opeedn,
+    #                             on_message=message,
+    #                             on_error=error,
+    #                             on_close=closed)
+    # ws.run_forever(dispatcher=None,
+    #                reconnect=5)
+    #
+    #
 for i in range(1):
     thread = threading.Thread(target=test)
     thread.start()
