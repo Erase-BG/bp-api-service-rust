@@ -336,7 +336,7 @@ pub async fn tasks_view(request: Request) -> Response {
 }
 
 pub async fn ws_view(request: Request) -> Response {
-    let (mut websocket, connected) = WebSocket::from(&request).await;
+    let (mut websocket, connected) = WebSocket::from_opt(&request, false).await;
 
     if !connected {
         return HttpResponse::bad_request().body("Bad request");
