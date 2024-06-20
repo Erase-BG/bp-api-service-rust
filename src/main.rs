@@ -253,13 +253,21 @@ async fn main() -> std::io::Result<()> {
 
     async fn middleware(request: Request, view: Option<View>) -> Response {
         println!("Client IP: {:?}", request.remote_addr().await);
+        let ctx: &SharedContext = request.context().unwrap();
         let pid = std::process::id();
         let process_fds_dir = format!("/proc/{}/fd", pid);
         let path = std::fs::read_dir(process_fds_dir);
         match path {
             Ok(files) => {
                 println!("---------------------------------------------");
-                println!("Process_id: {} file descriptors: {}", pid, files.count());
+                let pools = ctx.db_wrapper.connection.clone();
+                println!(
+                    "Process_id: {} file descriptors: {} db pools: {}",
+                    pid,
+                    files.count(),
+                    pools.size()
+                );
+                println!("db ok: {}", !pools.is_closed());
                 println!("---------------------------------------------");
             }
             _ => {}
