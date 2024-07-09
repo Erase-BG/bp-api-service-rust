@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 sqlx = { version = "0.7", features = ["runtime-tokio", "postgres", "chrono", "uuid", "json"] }
-tej-protoc = { git = "https://github.com/tejmagar/tej-protoc-rust", rev = "a295b35" }
+tej-protoc = { git = "https://github.com/tejmagar/tej-protoc-rust", rev = "fa67084" }
 racoon = { path="/home/tejmagar/RustroverProjects/open-source/racoon", version = "0.1.1"}
 tokio = { version = "1.18.5", features = ["full"] }
 env_logger = "0.11.3"

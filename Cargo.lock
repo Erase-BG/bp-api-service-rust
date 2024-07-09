@@ -2365,7 +2365,10 @@ checksum = "e1fc403891a21bcfb7c37834ba66a547a8f402146eba7265b5a6d88059c9ff2f"
 [[package]]
 name = "tej-protoc"
 version = "0.0.1"
-source = "git+https://github.com/tejmagar/tej-protoc-rust?rev=a295b35#a295b351761e53717db2834a86cbbfedc8d737c5"
+source = "git+https://github.com/tejmagar/tej-protoc-rust?rev=fa67084#fa67084f145906a85c59fc4824ea3b515b0ee93d"
+dependencies = [
+ "tokio 1.38.0",
+]
 
 [[package]]
 name = "tempfile"
