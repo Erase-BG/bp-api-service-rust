@@ -1,13 +1,14 @@
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use clients::bp_request_client::BPRequestClient;
 use env_logger::Env;
 
 mod api;
 mod clients;
+mod utils;
 
 pub struct SharedContext {
-    
+    bp_request_client: Arc<BPRequestClient>,
 }
 
 #[tokio::main]
@@ -25,7 +26,9 @@ async fn main() -> std::io::Result<()> {
         .await;
 
     // Resources shared across API views and task handlers.
-    let shared_context = SharedContext {};
+    let shared_context = SharedContext {
+        bp_request_client: Arc::new(bp_request_client),
+    };
 
     api::run_server(shared_context).await?;
     Ok(())

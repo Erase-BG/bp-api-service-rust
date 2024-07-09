@@ -10,6 +10,7 @@ use racoon::wrap_view;
 use crate::SharedContext;
 
 pub mod forms;
+pub mod task;
 pub mod urls;
 pub mod views;
 
