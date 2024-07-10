@@ -1,21 +1,12 @@
+use std::env;
+
 use sqlx::{Executor, PgPool};
 
 ///
 /// Connection pool for database connection to safely pass around threads.
 ///
 pub struct DBWrapper {
-    pub connection: PgPool,
-}
-
-///
-/// Clone trait implementation for thread safe passing.
-///
-impl Clone for DBWrapper {
-    fn clone(&self) -> Self {
-        Self {
-            connection: self.connection.clone(),
-        }
-    }
+    pub pool: PgPool,
 }
 
 // Table creation query
@@ -41,18 +32,37 @@ const CREATE_TABLE_BACKGROUND_REMOVER_TASK_SQL: &str = r#"
 ///
 /// Configures initial database operations such as creating a table if not exist.
 ///
-pub async fn setup(db_wrapper: DBWrapper) -> Result<(), sqlx::Error> {
-    let connection = db_wrapper.connection;
-    connection
-        .execute(CREATE_TABLE_BACKGROUND_REMOVER_TASK_SQL)
-        .await?;
-    Ok(())
+pub async fn setup() -> Result<DBWrapper, std::io::Error> {
+    // Extract postgres url
+    let postgres_url = match env::var("POSTGRES_URL") {
+        Ok(value) => value,
+        Err(error) => {
+            log::error!("Failed to read POSTGRES_URL from environment variable. Probably missing.");
+            return Err(std::io::Error::other(error));
+        }
+    };
+
+    return match PgPool::connect(&postgres_url).await {
+        Ok(pool) => match pool.execute(CREATE_TABLE_BACKGROUND_REMOVER_TASK_SQL).await {
+            Ok(_) => Ok(DBWrapper { pool }),
+            Err(error) => {
+                println!("Failed to create required tables.");
+                return Err(std::io::Error::other(error));
+            }
+        },
+        Err(error) => {
+            return Err(std::io::Error::other(error));
+        }
+    };
 }
 
 pub mod models {
+    use std::env;
     use std::fmt::Debug;
+    use std::path::PathBuf;
+    use std::sync::Arc;
 
-    use serde::ser::SerializeStruct;
+    use serde::ser::{Error, SerializeStruct};
     use serde::{Serialize, Serializer};
     use serde_json::Value;
 
@@ -60,28 +70,39 @@ pub mod models {
     use sqlx::Executor;
 
     use chrono::DateTime;
-    use serde::de::Error;
     use uuid::Uuid;
 
     use crate::db::DBWrapper;
-    // use crate::utils::urls::{path_to_absolute_media_url_optional, path_to_full_media_url};
+    use crate::utils::path_utils;
 
     ///
     /// This struct is the mapped columns of table `background_remover_task`.
     ///
     #[derive(Debug, sqlx::FromRow)]
     pub struct BackgroundRemoverTask {
+        /// Auto incremented unique integer for each background removal task.
         pub task_id: i64,
+        /// Date when this removal task is created.
         pub date_created: DateTime<Utc>,
+        /// Unique string for each task.
         pub key: Uuid,
+        /// Unique string for websocket group used for listening websocket messags.
         pub task_group: Uuid,
+        /// Relative path: media/image.jpg
         pub original_image_path: String,
+        /// Relative path: media/image.png
         pub preview_original_image_path: Option<String>,
+        /// Relative path: media/image.png
         pub mask_image_path: Option<String>,
+        /// Relative path: media/image.png
         pub processed_image_path: Option<String>,
+        /// Relative path: media/image.png
         pub preview_processed_image_path: Option<String>,
+        /// Background removal status.
         pub processing: Option<bool>,
+        /// Encoded string to identiy user.
         pub user_identifier: Option<String>,
+        /// Task logs.
         pub logs: Option<Value>,
     }
 
@@ -98,15 +119,28 @@ pub mod models {
             state.serialize_field("date_created", &self.date_created.to_string())?;
             state.serialize_field("key", &self.key)?;
             state.serialize_field("task_group", &self.task_group)?;
-            //
-            // match path_to_full_media_url(&self.original_image_path) {
-            //     Ok(value) => {
-            //         state.serialize_field("original_image", &value)?;
-            //     }
-            //     Err(error) => {
-            //         return Err(serde::ser::Error::custom(error));
-            //     }
-            // }
+
+            // Url configurations from environment variables.
+            let scheme = "https://";
+            let host = match env::var("HOST") {
+                Ok(value) => value,
+                Err(error) => {
+                    return Err(Error::custom(error));
+                }
+            };
+
+            let media_root = match env::var("MEDIA_ROOT") {
+                Ok(value) => value,
+                Err(error) => return Err(Error::custom(error)),
+            };
+
+            let full_original_image_url = path_utils::full_media_url_from_relative_path(
+                scheme,
+                &host,
+                PathBuf::from(&self.original_image_path),
+            );
+
+            state.serialize_field("original_image", &full_original_image_url)?;
             //
             // match path_to_absolute_media_url_optional(&self.preview_original_image_path) {
             //     Ok(value) => {
@@ -222,7 +256,7 @@ pub mod models {
             db_wrapper: DBWrapper,
             new_task: &NewBackgroundRemoverTask,
         ) -> Result<(), sqlx::Error> {
-            let connection = db_wrapper.connection;
+            let connection = db_wrapper.pool;
 
             const INSERT_QUERY: &str = r#"
                 INSERT INTO background_remover_task(
@@ -257,7 +291,7 @@ pub mod models {
             db_wrapper: DBWrapper,
             update_task: &UpdateBackgroundRemoverTask,
         ) -> Result<(), sqlx::Error> {
-            let connection = db_wrapper.connection;
+            let connection = db_wrapper.pool.clone();
 
             const UPDATE_QUERY: &str = r#"
                 UPDATE background_remover_task
@@ -287,11 +321,11 @@ pub mod models {
         /// Updates processing state of the task.
         ///
         pub async fn update_processing_state(
-            db_wrapper: DBWrapper,
+            db_wrapper: Arc<DBWrapper>,
             key: &Uuid,
             state: bool,
         ) -> Result<(), sqlx::Error> {
-            let connection = db_wrapper.connection;
+            let connection = &db_wrapper.pool;
 
             const UPDATE_QUERY: &str = r#"
                 UPDATE background_remover_task
@@ -311,10 +345,11 @@ pub mod models {
         /// Returns instance of `BackgroundRemoverTask` of matching `key`.
         ///
         pub async fn fetch(
-            db_wrapper: DBWrapper,
+            db_wrapper: Arc<DBWrapper>,
             key: &Uuid,
         ) -> Result<BackgroundRemoverTask, sqlx::Error> {
-            let connection = db_wrapper.connection;
+            let connection = db_wrapper.pool.clone();
+
             const FETCH_QUERY: &str = r#"
                 SELECT * FROM background_remover_task WHERE key=$1 LIMIT 1
             "#;
@@ -328,10 +363,10 @@ pub mod models {
         }
 
         pub async fn fetch_by_page(
-            db_wrapper: DBWrapper,
+            db_wrapper: Arc<DBWrapper>,
             page: u32,
         ) -> Result<Vec<BackgroundRemoverTask>, sqlx::Error> {
-            let connection = db_wrapper.connection;
+            let connection = db_wrapper.pool.clone();
             let tasks_per_page = 25;
             let offset = (page - 1) * tasks_per_page;
 
@@ -352,12 +387,12 @@ pub mod models {
         }
 
         pub async fn length(db_wrapper: DBWrapper) -> Result<u64, sqlx::Error> {
-            let connection = db_wrapper.connection;
+            let connection = db_wrapper.pool;
             const COUNT_QUERY: &str = r#"
                 SELECT COUNT(task_id) AS total FROM background_remover_task
             "#;
 
-            let size: (i64, ) = sqlx::query_as(COUNT_QUERY).fetch_one(&connection).await?;
+            let size: (i64,) = sqlx::query_as(COUNT_QUERY).fetch_one(&connection).await?;
             Ok(size.0 as u64)
         }
 
@@ -366,7 +401,7 @@ pub mod models {
             from_past: &DateTime<Utc>,
             to_present: &DateTime<Utc>,
         ) -> Result<Vec<BackgroundRemoverTask>, sqlx::Error> {
-            let connection = db_wrapper.connection;
+            let connection = db_wrapper.pool.clone();
 
             let fetch_query = r#"
                 SELECT * FROM background_remover_task
