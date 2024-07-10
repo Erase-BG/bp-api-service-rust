@@ -5,6 +5,7 @@ use env_logger::Env;
 
 mod api;
 mod clients;
+mod db;
 mod utils;
 
 pub struct SharedContext {
