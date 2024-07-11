@@ -7,7 +7,7 @@ use futures_util::lock::Mutex;
 use futures_util::Future;
 
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::Value;
 use tej_protoc::protoc::encoder::build_bytes_for_message;
 use tej_protoc::{protoc::File, stream::Stream};
 
@@ -85,7 +85,7 @@ impl BPRequestClient {
                 // Handshakes as request client.
                 match Self::handshake(stream.clone()).await {
                     Ok(()) => {
-                        println!("Handshake done.");
+                        println!("Handshake completed.");
                     }
                     Err(error) => {
                         eprintln!("Handshake failed with bp server. Error: {}", error);
@@ -143,10 +143,9 @@ impl BPRequestClient {
         };
 
         let handshake_request_json = serde_json::to_string(&handshake_request).unwrap();
-        println!("{}", handshake_request_json);
 
         let bytes = build_bytes_for_message(&handshake_request_json.as_bytes().to_vec());
-        // tcp_stream.write_chunk(&bytes).await?;
+        tcp_stream.write_chunk(&bytes).await?;
 
         Ok(())
     }
@@ -171,7 +170,6 @@ impl BPRequestClient {
                         break;
                     }
                 };
-            println!("Received");
 
             let message = String::from_utf8_lossy(&decoded_response.message).to_string();
             let message_json = match Value::from_str(&message) {
@@ -200,9 +198,7 @@ impl BPRequestClient {
         {
             let stream_holder = self.stream_holder.lock().await;
             if let Some(stream) = stream_holder.as_ref() {
-                println!("Writing");
                 stream.write_chunk(&encoded_bytes).await?;
-                println!("Wrote");
             } else {
                 eprintln!("BP Request client not connected to server.")
             }
