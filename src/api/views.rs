@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::api::forms::PublicImageUploadForm;
 use crate::db::models::{BackgroundRemoverTask, NewBackgroundRemoverTask};
-use crate::utils::path_utils::ForImage;
+use crate::utils::path_utils;
 use crate::SharedContext;
 
 pub async fn public_upload(request: Request) -> Response {
@@ -40,10 +40,9 @@ pub async fn public_upload(request: Request) -> Response {
     // Unique id for each task. Used for database lookup and saving files.
     let task_id = Uuid::new_v4();
 
-    let original_image_save_path = match path_utils::generate_save_path(ForImage::OriginalImage(
-        &task_id,
-        &original_image.filename,
-    )) {
+    let original_image_save_path = match path_utils::generate_save_path(
+        path_utils::ForImage::OriginalImage(&task_id, &original_image.filename),
+    ) {
         Ok(path) => path,
         Err(error) => {
             eprintln!(
