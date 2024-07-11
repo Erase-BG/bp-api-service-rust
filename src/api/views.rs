@@ -7,10 +7,9 @@ use serde_json::json;
 use uuid::Uuid;
 
 use crate::api::forms::PublicImageUploadForm;
+use crate::db::models::{BackgroundRemoverTask, NewBackgroundRemoverTask};
 use crate::utils::path_utils::{self, ForImage};
 use crate::SharedContext;
-
-use super::task;
 
 pub async fn public_upload(request: Request) -> Response {
     if request.method != "POST" {
@@ -45,21 +44,48 @@ pub async fn public_upload(request: Request) -> Response {
     )) {
         Ok(path) => path,
         Err(error) => {
-            eprintln!("{}", error);
+            eprintln!(
+                "Failed to generate save path for original image. Error: {}",
+                error
+            );
 
             return JsonResponse::internal_server_error().body(json!({
                 "status": "failed",
                 "status_code": "internal_server_error"
-            }))
+            }));
         }
     };
 
     // Moves original image to the configured destination.
-    let _ = tokio::fs::rename(original_image.temp_path, original_image_save_path).await;
+    let _ = tokio::fs::rename(original_image.temp_path, &original_image_save_path).await;
+
+    // Saves to database
+    let task_group = validated_form.task_group.value().await;
+    let country = validated_form.country.value().await;
+    let user_identifier = validated_form.user_identifier.value().await;
+
+    let new_task = NewBackgroundRemoverTask {
+        country,
+        key: task_id,
+        original_image_path: original_image_save_path.to_string_lossy().to_string(),
+        preview_original_image_path: original_image_save_path.to_string_lossy().to_string(),
+        task_group,
+        user_identifier,
+    };
+
+    match BackgroundRemoverTask::insert_new_task(shared_context.db_wrapper.clone(), &new_task).await
+    {
+        Ok(()) => {}
+        Err(error) => {
+            eprint!("Failed to insert new task to database. Error: {}", error);
+            return JsonResponse::ok().body(json!({
+                "status": "success",
+                "filename": original_image.filename
+            }));
+        }
+    };
 
     // Sends this image for processing.
-    task::send(shared_context.bp_request_client.clone()).await;
-
     JsonResponse::ok().body(json!({
         "status": "success",
         "filename": original_image.filename

@@ -134,50 +134,56 @@ pub mod models {
                 Err(error) => return Err(Error::custom(error)),
             };
 
+            // Adds full original image url to JSON object.
             let full_original_image_url = path_utils::full_media_url_from_relative_path(
                 scheme,
                 &host,
                 PathBuf::from(&self.original_image_path),
             );
-
             state.serialize_field("original_image", &full_original_image_url)?;
-            //
-            // match path_to_absolute_media_url_optional(&self.preview_original_image_path) {
-            //     Ok(value) => {
-            //         state.serialize_field("preview_original_image", &value)?;
-            //     }
-            //     Err(error) => {
-            //         return Err(serde::ser::Error::custom(error));
-            //     }
-            // }
-            //
-            // match path_to_absolute_media_url_optional(&self.mask_image_path) {
-            //     Ok(value) => {
-            //         state.serialize_field("mask_image", &value)?;
-            //     }
-            //     Err(error) => {
-            //         return Err(serde::ser::Error::custom(error));
-            //     }
-            // }
-            //
-            // match path_to_absolute_media_url_optional(&self.processed_image_path) {
-            //     Ok(value) => {
-            //         state.serialize_field("processed_image", &value)?;
-            //     }
-            //     Err(error) => {
-            //         return Err(serde::ser::Error::custom(error));
-            //     }
-            // }
-            //
-            // match path_to_absolute_media_url_optional(&self.preview_processed_image_path) {
-            //     Ok(value) => {
-            //         state.serialize_field("preview_processed_image", &value)?;
-            //     }
-            //     Err(error) => {
-            //         return Err(serde::ser::Error::custom(error));
-            //     }
-            // }
-            //
+
+            // Adds full media image url to JSON object.
+            let full_media_image_url;
+            if let Some(preview_original_path) = &self.preview_original_image_path {
+                full_media_image_url = Some(path_utils::full_media_url_from_relative_path(
+                    scheme,
+                    &host,
+                    PathBuf::from(preview_original_path),
+                ));
+            } else {
+                full_media_image_url = None;
+            }
+            state.serialize_field("preview_original_image", &full_media_image_url)?;
+
+            // Adds full processed image url to JSON object.
+            let full_processed_original_image_url;
+            if let Some(processed_original_path) = &self.processed_image_path {
+                full_processed_original_image_url =
+                    Some(path_utils::full_media_url_from_relative_path(
+                        scheme,
+                        &host,
+                        PathBuf::from(processed_original_path),
+                    ));
+            } else {
+                full_processed_original_image_url = None;
+            }
+
+            state.serialize_field("processed_image", &full_processed_original_image_url)?;
+
+            let full_preview_processed_image_url;
+            if let Some(preview_processed_path) = &self.preview_processed_image_path {
+                full_preview_processed_image_url =
+                    Some(path_utils::full_media_url_from_relative_path(
+                        scheme,
+                        &host,
+                        PathBuf::from(preview_processed_path),
+                    ));
+            } else {
+                full_preview_processed_image_url = None;
+            }
+
+            state.serialize_field("preview_processed_path", &full_preview_processed_image_url)?;
+
             state.serialize_field("processing", &self.processing)?;
             state.serialize_field("user_identifier", &self.user_identifier)?;
             state.serialize_field("logs", &self.logs)?;
@@ -253,10 +259,10 @@ pub mod models {
         /// Inserts new record to the database.
         ///
         pub async fn insert_new_task(
-            db_wrapper: DBWrapper,
+            db_wrapper: Arc<DBWrapper>,
             new_task: &NewBackgroundRemoverTask,
         ) -> Result<(), sqlx::Error> {
-            let connection = db_wrapper.pool;
+            let connection = db_wrapper.pool.clone();
 
             const INSERT_QUERY: &str = r#"
                 INSERT INTO background_remover_task(
