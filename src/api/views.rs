@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 use crate::api::forms::PublicImageUploadForm;
 use crate::db::models::{BackgroundRemoverTask, NewBackgroundRemoverTask};
-use crate::utils::path_utils::{self, ForImage};
+use crate::utils::path_utils::ForImage;
 use crate::SharedContext;
 
 pub async fn public_upload(request: Request) -> Response {
@@ -22,7 +22,7 @@ pub async fn public_upload(request: Request) -> Response {
     let validated_form = match form.validate(&request).await {
         Ok(form) => form,
         Err(error) => {
-            eprintln!("Erros: {:?}", error);
+            eprintln!("Errors: {:?}", error);
 
             return JsonResponse::bad_request().body(json!({
                 "status": "failed",
