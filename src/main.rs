@@ -12,6 +12,7 @@ mod api;
 mod clients;
 mod db;
 mod utils;
+
 #[derive(Clone)]
 pub struct SharedContext {
     bp_request_client: Arc<BPRequestClient>,
