@@ -135,13 +135,13 @@ pub async fn listen_processing_ws(request: Request) -> Response {
 
     // Adds this websocket connection to ws_clients. Until all references are dropped, it will stay
     // alive.
-    ws_clients.add(websocket.clone()).await;
+    ws_clients.add(&task_group, websocket.clone()).await;
 
     while let Some(message) = websocket.message().await {
         task::handle_ws_received_message(&task_group, &websocket, shared_context, message).await;
     }
 
     // Removes websocket instance from ws_clients.
-    ws_clients.remove(websocket.clone()).await;
+    ws_clients.remove(&task_group, websocket.clone()).await;
     websocket.exit()
 }

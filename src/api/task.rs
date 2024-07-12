@@ -182,3 +182,51 @@ pub async fn handle_process_image_command(
         };
     }
 }
+
+pub async fn handle_response_received_from_bp_server(
+    shared_context: SharedContext,
+    files: Vec<File>,
+    messsage: Value,
+) {
+    println!("Received from bp server: {}", messsage);
+
+    let task_id_option = messsage.get("task_id");
+    let task_id_str;
+
+    if let Some(task_id_value) = task_id_option {
+        if let Some(str_value) = task_id_value.as_str() {
+            task_id_str = str_value;
+        } else {
+            eprintln!("The received task id is not a string.");
+            return;
+        }
+    } else {
+        eprintln!("Ignoring result. The task_id in bp server response is missing.");
+        return;
+    }
+
+    let task_id = match Uuid::parse_str(task_id_str) {
+        Ok(uuid) => uuid,
+        Err(error) => {
+            eprintln!("Failed to parse received task_id to UUID. Error: {}", error);
+            return;
+        }
+    };
+
+    let instance = match BackgroundRemoverTask::fetch(shared_context.db_wrapper, &task_id).await {
+        Ok(instance) => instance,
+        Err(error) => {
+            eprintln!("Failed to fetch background remover task. Error: {}", error);
+
+            // Nothing can be done.
+            return;
+        }
+    };
+
+    let ws_clients = shared_context.ws_clients;
+    let websockets = ws_clients.get_all(&instance.task_group).await;
+
+    for websocket in websockets {
+        let _ = websocket.send_json(&messsage).await;
+    }
+}

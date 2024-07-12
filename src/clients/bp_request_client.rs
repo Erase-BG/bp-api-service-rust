@@ -41,7 +41,7 @@ impl BPRequestClient {
     pub async fn listen<F, Fut>(&self, mut callback: F) -> JoinHandle<()>
     where
         F: FnMut(Vec<File>, Value) -> Fut + Send + Sync + 'static,
-        Fut: Future + Send + Sync + 'static,
+        Fut: Future + Send + 'static,
         Fut::Output: Send + Sync + 'static,
     {
         let address = self.address.clone();
@@ -158,7 +158,7 @@ impl BPRequestClient {
     async fn listen_stream_response<F, Fut>(stream: Arc<Stream>, callback: &mut F)
     where
         F: FnMut(Vec<File>, Value) -> Fut + Send + Sync + 'static,
-        Fut: Future + Send + Sync + 'static,
+        Fut: Future + Send + 'static,
         Fut::Output: Send + Sync + 'static,
     {
         loop {
