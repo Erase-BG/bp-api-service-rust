@@ -10,9 +10,11 @@ use racoon::wrap_view;
 use crate::SharedContext;
 
 pub mod forms;
+pub mod shortcuts;
 pub mod task;
 pub mod urls;
 pub mod views;
+pub mod ws_clients;
 
 pub async fn middleware(request: Request, view: Option<View>) -> Response {
     Path::resolve(request, view).await

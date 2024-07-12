@@ -1,6 +1,8 @@
 use racoon::core::request::Request;
 use racoon::core::response::status::ResponseStatus;
 use racoon::core::response::{HttpResponse, JsonResponse, Response};
+use racoon::core::shortcuts::SingleText;
+use racoon::core::websocket::WebSocket;
 use racoon::forms::FormValidator;
 
 use serde_json::json;
@@ -10,6 +12,8 @@ use crate::api::forms::PublicImageUploadForm;
 use crate::db::models::{BackgroundRemoverTask, NewBackgroundRemoverTask};
 use crate::utils::path_utils;
 use crate::SharedContext;
+
+use super::task;
 
 pub async fn public_upload(request: Request) -> Response {
     if request.method != "POST" {
@@ -94,5 +98,46 @@ pub async fn public_upload(request: Request) -> Response {
 }
 
 pub async fn listen_processing_ws(request: Request) -> Response {
-    todo!()
+    let (websocket, connected) = WebSocket::from(&request).await;
+    if !connected {
+        return websocket.bad_request().await;
+    }
+
+    let task_group_str = request
+        .path_params
+        .value("task_group")
+        .expect("Task Group is missing.");
+
+    // If invalid task group is received, sends error response and shutdowns websocket connection.
+    let task_group = match Uuid::parse_str(task_group_str) {
+        Ok(uuid) => uuid,
+        Err(error) => {
+            eprintln!("Failed to parse task_group to UUID. Error: {}", error);
+
+            let _ = websocket
+                .send_json(&json!({
+                    "status": "failed",
+                    "status_code": "invalid_path_format",
+                    "message": "Invalid task group."
+                }))
+                .await;
+            return websocket.exit();
+        }
+    };
+
+    // Access shared resources.
+    let shared_context: &SharedContext = request.context().expect("SharedContext is missing.");
+    let ws_clients = shared_context.ws_clients.clone();
+
+    // Adds this websocket connection to ws_clients. Until all references are dropped, it will stay
+    // alive.
+    ws_clients.add(websocket.clone()).await;
+
+    while let Some(message) = websocket.message().await {
+        task::handle_ws_received_message(&task_group, &websocket, shared_context, message).await;
+    }
+
+    // Removes websocket instance from ws_clients.
+    ws_clients.remove(websocket.clone()).await;
+    websocket.exit()
 }
