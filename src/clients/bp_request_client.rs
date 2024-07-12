@@ -200,7 +200,9 @@ impl BPRequestClient {
             if let Some(stream) = stream_holder.as_ref() {
                 stream.write_chunk(&encoded_bytes).await?;
             } else {
-                eprintln!("BP Request client not connected to server.")
+                return Err(std::io::Error::other(
+                    "BP Request client not connected to server.",
+                ));
             }
         }
 

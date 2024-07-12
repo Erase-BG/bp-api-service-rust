@@ -1,3 +1,4 @@
+use std::env;
 use std::str::FromStr;
 use std::sync::Arc;
 
@@ -10,7 +11,7 @@ use tokio::fs;
 use tokio::io::AsyncReadExt;
 use uuid::Uuid;
 
-use crate::api::shortcuts;
+use crate::api::shortcuts::{self, internal_server_error};
 use crate::clients::bp_request_client::BPRequestClient;
 use crate::db::models::BackgroundRemoverTask;
 use crate::SharedContext;
@@ -65,8 +66,15 @@ pub async fn handle_ws_received_message(
                 }
             };
 
-            if let Some(key) = json.get("key") {
-                let key = match Uuid::parse_str(&key.to_string()) {
+            let key;
+            if let Some(value) = json.get("key") {
+                key = value;
+            } else {
+                return;
+            }
+
+            if let Some(key) = key.as_str() {
+                let key = match Uuid::parse_str(key) {
                     Ok(uuid) => uuid,
                     Err(error) => {
                         eprint!("Failed to parse key to UUID. Error: {}", error);
@@ -96,16 +104,81 @@ pub async fn handle_process_image_command(
     shared_context: &SharedContext,
 ) {
     let db_wrapper = shared_context.db_wrapper.clone();
-    let instance = match BackgroundRemoverTask::fetch(db_wrapper, &key).await {
+    let instance = match BackgroundRemoverTask::fetch(db_wrapper.clone(), &key).await {
         Ok(instance) => instance,
         Err(error) => {
-            eprintln!("Failed to fetch instance. Error: {}", error);
-            shortcuts::internal_server_error(websocket).await;
+            match error {
+                sqlx::Error::RowNotFound => {
+                    let _ = websocket
+                        .send_json(&json!({
+                            "status": "failed",
+                            "status_code": "not_found",
+                            "message": "Image with this key does not exist."
+                        }))
+                        .await;
+                }
+                _ => {
+                    eprintln!("Failed to fetch instance. Error: {}", error);
+                    shortcuts::internal_server_error(websocket).await;
+                }
+            }
             return;
         }
     };
 
     if &instance.task_group != task_group {
+        let _ = websocket
+            .send_json(&json!({
+                "status": "failed",
+                "status_code": "permission_error",
+                "message": "This task_group does not have permission to process image with this key."
+            }))
+            .await;
+        return;
+    }
 
+    let hard_process_var = env::var("PROCESS_HARD").unwrap_or("false".to_string());
+    let is_process_hard = hard_process_var.to_lowercase() == "true";
+    let is_processing = instance.processing.unwrap_or(false);
+
+    // Requires image processing if env var PROCESS_HARD is specified or processed_image_path is
+    // None.
+    let need_processing = is_process_hard || !is_processing;
+
+    if !need_processing {
+        // Image is already processed.
+        let serialized = match instance.serialize() {
+            Ok(serialized) => serialized,
+            Err(error) => {
+                eprintln!("Failed to serialize data. Error: {}", error);
+                internal_server_error(websocket).await;
+                return;
+            }
+        };
+
+        let _ = websocket
+            .send_json(&json!({
+                "status": "success",
+                "status_code": "result",
+                "data": serialized,
+            }))
+            .await;
+    } else {
+        // Send this image for processing.
+        println!("Sending task: {} to Bp Server.", instance.task_id);
+        match send(shared_context.bp_request_client.clone(), &instance).await {
+            Ok(()) => {
+                println!("Sent task successfully for processing.");
+                let _ = BackgroundRemoverTask::update_processing_state(
+                    db_wrapper.clone(),
+                    &instance.key,
+                    true,
+                )
+                .await;
+            }
+            Err(error) => {
+                eprintln!("Failed to send task to bp server. Error: {}", error);
+            }
+        };
     }
 }

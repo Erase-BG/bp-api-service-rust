@@ -93,7 +93,11 @@ pub async fn public_upload(request: Request) -> Response {
     // Sends this image for processing.
     JsonResponse::ok().body(json!({
         "status": "success",
-        "filename": original_image.filename
+        "status_code": "image_upload",
+        "data": {
+            "key": new_task.key,
+            "task_group": new_task.task_group,
+        }
     }))
 }
 

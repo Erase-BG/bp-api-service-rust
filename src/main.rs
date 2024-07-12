@@ -1,6 +1,8 @@
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
+use std::time::Duration;
 
 use api::ws_clients::WsClients;
+
 use clients::bp_request_client::BPRequestClient;
 use db::DBWrapper;
 use env_logger::Env;

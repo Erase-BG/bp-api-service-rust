@@ -129,11 +129,6 @@ pub mod models {
                 }
             };
 
-            let media_root = match env::var("MEDIA_ROOT") {
-                Ok(value) => value,
-                Err(error) => return Err(Error::custom(error)),
-            };
-
             // Adds full original image url to JSON object.
             let full_original_image_url = path_utils::full_media_url_from_relative_path(
                 scheme,
