@@ -67,15 +67,47 @@ where
     format!("{}://{}/{}", scheme, host, relative_url.to_string_lossy())
 }
 
+///
+/// /home/tejmagar/media/ /home/tejmagar/media/a.txt
+/// /media/a.txt
+///
+///
+pub fn relative_media_url_from_full_path(media_root: &PathBuf, full_path: &PathBuf) -> PathBuf {
+    let mut relative_media_url = PathBuf::new();
+    let media_root_parts: Vec<&OsStr> = media_root.iter().collect();
+    let full_path_parts: Vec<&OsStr> = full_path.iter().collect();
+
+    let scan_range = std::cmp::min(media_root_parts.len(), full_path_parts.len());
+    let mut last_matched_index = 0;
+
+    for i in 0..scan_range {
+        if media_root_parts[i] != full_path_parts[i] {
+            break;
+        }
+
+        last_matched_index = i;
+    }
+
+    for i in last_matched_index..full_path_parts.len() {
+        relative_media_url.push(full_path_parts[i]);
+    }
+
+    relative_media_url
+}
+
 pub enum ForImage<'a> {
     OriginalImage(&'a Uuid, &'a String),
+    PreviewOriginalImage(&'a Uuid, &'a String),
+    MaskImage(&'a Uuid, &'a String),
+    TransparentImage(&'a Uuid, &'a String),
+    PreviewTransparentImage(&'a Uuid, &'a String),
 }
 
 ///
 /// Returns path.
 /// Depends on environment variables.
 ///
-pub fn generate_save_path(from_image: ForImage) -> std::io::Result<PathBuf> {
+pub fn generate_save_path(for_image: ForImage) -> std::io::Result<PathBuf> {
     let media_root = match env::var("MEDIA_ROOT") {
         Ok(dir) => dir,
         Err(error) => {
@@ -87,10 +119,77 @@ pub fn generate_save_path(from_image: ForImage) -> std::io::Result<PathBuf> {
     relative_url.push(&media_root);
     relative_url.push("background-remover");
 
-    match from_image {
+    match for_image {
         ForImage::OriginalImage(uuid, filename) => {
             relative_url.push(uuid.to_string());
             relative_url.push("original");
+
+            // Creates directories if not exists.
+            if !relative_url.exists() {
+                std::fs::create_dir_all(&relative_url)?;
+            }
+
+            relative_url.push(filename);
+
+            Ok(file_path_from_relative_url(
+                PathBuf::from(media_root),
+                relative_url,
+            ))
+        }
+
+        ForImage::PreviewOriginalImage(uuid, filename) => {
+            relative_url.push(uuid.to_string());
+            relative_url.push("preview-original");
+
+            // Creates directories if not exists.
+            if !relative_url.exists() {
+                std::fs::create_dir_all(&relative_url)?;
+            }
+
+            relative_url.push(filename);
+
+            Ok(file_path_from_relative_url(
+                PathBuf::from(media_root),
+                relative_url,
+            ))
+        }
+
+        ForImage::MaskImage(uuid, filename) => {
+            relative_url.push(uuid.to_string());
+            relative_url.push("mask");
+
+            // Creates directories if not exists.
+            if !relative_url.exists() {
+                std::fs::create_dir_all(&relative_url)?;
+            }
+
+            relative_url.push(filename);
+
+            Ok(file_path_from_relative_url(
+                PathBuf::from(media_root),
+                relative_url,
+            ))
+        }
+        ForImage::TransparentImage(uuid, filename) => {
+            relative_url.push(uuid.to_string());
+            relative_url.push("transparent");
+
+            // Creates directories if not exists.
+            if !relative_url.exists() {
+                std::fs::create_dir_all(&relative_url)?;
+            }
+
+            relative_url.push(filename);
+
+            Ok(file_path_from_relative_url(
+                PathBuf::from(media_root),
+                relative_url,
+            ))
+        }
+
+        ForImage::PreviewTransparentImage(uuid, filename) => {
+            relative_url.push(uuid.to_string());
+            relative_url.push("preview-transparent");
 
             // Creates directories if not exists.
             if !relative_url.exists() {
@@ -137,5 +236,14 @@ pub mod test {
         let expected = "https://example.com/media/img.jpg".to_string();
         let result = super::full_media_url_from_relative_path(scheme, host, relative_url);
         assert_eq!(expected, result);
+    }
+
+    #[test]
+    pub fn test_relative_media_url_from_full_path() {
+        let media_root = PathBuf::from("/var/www/public/example.com/media/");
+        let full_path = PathBuf::from("/var/www/public/example.com/media/example.txt");
+
+        let relative_url = super::relative_media_url_from_full_path(&media_root, &full_path);
+        assert_eq!(PathBuf::from("media/example.txt"), relative_url);
     }
 }

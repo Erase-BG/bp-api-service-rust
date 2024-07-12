@@ -1,3 +1,6 @@
+use std::env;
+use std::path::PathBuf;
+
 use racoon::core::request::Request;
 use racoon::core::response::status::ResponseStatus;
 use racoon::core::response::{HttpResponse, JsonResponse, Response};
@@ -69,11 +72,36 @@ pub async fn public_upload(request: Request) -> Response {
     let country = validated_form.country.value().await;
     let user_identifier = validated_form.user_identifier.value().await;
 
+    let media_root = match env::var("MEDIA_ROOT") {
+        Ok(path) => PathBuf::from(path),
+        Err(error) => {
+            eprintln!(
+                "The MEDIA_ROOT environment variable is missing. Error: {}",
+                error
+            );
+            return JsonResponse::internal_server_error().body(json!({
+                "status": "failed",
+                "status_code": "internal_server_error",
+                "message": "Internal Server Error"
+            }));
+        }
+    };
+
+    let relative_original_image_media_url =
+        path_utils::relative_media_url_from_full_path(&media_root, &original_image_save_path);
+
+    let preview_original_image_media_url =
+        path_utils::relative_media_url_from_full_path(&media_root, &original_image_save_path);
+
     let new_task = NewBackgroundRemoverTask {
         country,
         key: task_id,
-        original_image_path: original_image_save_path.to_string_lossy().to_string(),
-        preview_original_image_path: original_image_save_path.to_string_lossy().to_string(),
+        original_image_path: relative_original_image_media_url
+            .to_string_lossy()
+            .to_string(),
+        preview_original_image_path: preview_original_image_media_url
+            .to_string_lossy()
+            .to_string(),
         task_group,
         user_identifier,
     };

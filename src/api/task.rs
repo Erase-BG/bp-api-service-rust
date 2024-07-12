@@ -1,9 +1,11 @@
 use std::env;
+use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
 use racoon::core::websocket::{Message, WebSocket};
 
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tej_protoc::protoc::File;
 
@@ -13,7 +15,8 @@ use uuid::Uuid;
 
 use crate::api::shortcuts::{self, internal_server_error};
 use crate::clients::bp_request_client::BPRequestClient;
-use crate::db::models::BackgroundRemoverTask;
+use crate::db::models::{BackgroundRemoverTask, UpdateBackgroundRemoverTask};
+use crate::utils::{path_utils, save_utils};
 use crate::SharedContext;
 
 ///
@@ -183,50 +186,188 @@ pub async fn handle_process_image_command(
     }
 }
 
+#[derive(Serialize, Deserialize, Debug)]
+pub struct BPResponse {
+    task_id: Uuid,
+    status: String,
+    status_code: String,
+    message: Option<String>,
+    timestamps: Option<Value>,
+}
+
 pub async fn handle_response_received_from_bp_server(
     shared_context: SharedContext,
     files: Vec<File>,
     messsage: Value,
 ) {
     println!("Received from bp server: {}", messsage);
-
-    let task_id_option = messsage.get("task_id");
-    let task_id_str;
-
-    if let Some(task_id_value) = task_id_option {
-        if let Some(str_value) = task_id_value.as_str() {
-            task_id_str = str_value;
-        } else {
-            eprintln!("The received task id is not a string.");
-            return;
-        }
-    } else {
-        eprintln!("Ignoring result. The task_id in bp server response is missing.");
-        return;
-    }
-
-    let task_id = match Uuid::parse_str(task_id_str) {
-        Ok(uuid) => uuid,
-        Err(error) => {
-            eprintln!("Failed to parse received task_id to UUID. Error: {}", error);
-            return;
-        }
-    };
-
-    let instance = match BackgroundRemoverTask::fetch(shared_context.db_wrapper, &task_id).await {
+    let bp_response: BPResponse = match serde_json::from_value(messsage) {
         Ok(instance) => instance,
         Err(error) => {
-            eprintln!("Failed to fetch background remover task. Error: {}", error);
-
-            // Nothing can be done.
+            eprintln!(
+                "Invalid format message received from BP Server. Error: {}",
+                error
+            );
             return;
         }
     };
 
-    let ws_clients = shared_context.ws_clients;
-    let websockets = ws_clients.get_all(&instance.task_group).await;
+    let instance =
+        match BackgroundRemoverTask::fetch(shared_context.db_wrapper.clone(), &bp_response.task_id)
+            .await
+        {
+            Ok(instance) => instance,
+            Err(error) => {
+                eprintln!("Failed to fetch background remover task. Error: {}", error);
 
+                // Nothing can be done.
+                return;
+            }
+        };
+
+    if bp_response.status == "success" && bp_response.status_code == "process_completed" {
+        handle_files_received_from_bp_server(shared_context, instance, &files).await;
+    } else {
+        let websockets = shared_context
+            .ws_clients
+            .get_all(&instance.task_group)
+            .await;
+
+        for websocket in websockets {
+            let _ = websocket
+                .send_json(&json!({
+                    "status": bp_response.status,
+                    "status_code": bp_response.status_code,
+                    "message": bp_response.message,
+                }))
+                .await;
+        }
+    }
+}
+
+async fn handle_files_received_from_bp_server(
+    shared_context: SharedContext,
+    instance: BackgroundRemoverTask,
+    files: &Vec<File>,
+) {
+    // Saves files received from BP Server. These paths are absolute and should not be used for
+    // saving in database.
+    let (transparent_image_path, mask_image_path, preview_transparent_image_path) =
+        match save_utils::save_files_received_from_bp_server(&instance, &files).await {
+            Ok(paths) => paths,
+            Err(error) => {
+                eprintln!(
+                    "Failed to save files received from bp server. Error: {}",
+                    error
+                );
+
+                broadcast_internal_server_error(shared_context.clone(), &instance.task_group).await;
+                return;
+            }
+        };
+
+    let media_root = match env::var("MEDIA_ROOT") {
+        Ok(path) => PathBuf::from(path),
+        Err(error) => {
+            eprintln!(
+                "The MEDIA_ROOT path is not specified in environment variable. Error: {}",
+                error
+            );
+            broadcast_internal_server_error(shared_context.clone(), &instance.task_group).await;
+            return;
+        }
+    };
+
+    // Converts to relative media url for saving in database.
+    let relative_mask_image_path =
+        path_utils::relative_media_url_from_full_path(&media_root, &mask_image_path);
+    let relative_transparent_image_path =
+        path_utils::relative_media_url_from_full_path(&media_root, &transparent_image_path);
+    let relative_preview_transparent_image_path =
+        path_utils::relative_media_url_from_full_path(&media_root, &preview_transparent_image_path);
+
+    let update_task = UpdateBackgroundRemoverTask {
+        key: instance.key,
+        logs: instance.logs,
+        mask_image_path: relative_mask_image_path.to_string_lossy().to_string(),
+        processed_image_path: relative_transparent_image_path
+            .to_string_lossy()
+            .to_string(),
+        preview_processed_image_path: relative_preview_transparent_image_path
+            .to_string_lossy()
+            .to_string(),
+    };
+
+    match BackgroundRemoverTask::update_task(shared_context.db_wrapper.clone(), &update_task).await
+    {
+        Ok(()) => {}
+        Err(error) => {
+            eprintln!("Failed to update task record in database. Error: {}", error);
+            broadcast_internal_server_error(shared_context.clone(), &instance.task_group).await;
+            return;
+        }
+    };
+
+    // Marks this task as completed.
+    match BackgroundRemoverTask::update_processing_state(
+        shared_context.db_wrapper.clone(),
+        &instance.key,
+        false,
+    )
+    .await
+    {
+        Ok(()) => {}
+        Err(error) => {
+            eprintln!("Failed to update processing state. Error: {}", error);
+            broadcast_internal_server_error(shared_context.clone(), &instance.task_group).await;
+            return;
+        }
+    }
+
+    let fresh_instance = match BackgroundRemoverTask::fetch(
+        shared_context.db_wrapper.clone(),
+        &instance.key,
+    )
+    .await
+    {
+        Ok(instance) => instance,
+        Err(error) => {
+            eprintln!(
+                "Failed to fetch background remover task instance. Error: {}",
+                error
+            );
+            broadcast_internal_server_error(shared_context.clone(), &instance.task_group).await;
+            return;
+        }
+    };
+
+    let serialized = match fresh_instance.serialize() {
+        Ok(serialized) => serialized,
+        Err(error) => {
+            eprintln!(
+                "Failed to serialize background remover task instance. Error: {}",
+                error
+            );
+            broadcast_internal_server_error(shared_context, &fresh_instance.task_group).await;
+            return;
+        }
+    };
+
+    let websockets = shared_context
+        .ws_clients
+        .get_all(&fresh_instance.task_group)
+        .await;
+
+    // Broadcasts response to all websocket clients.
     for websocket in websockets {
-        let _ = websocket.send_json(&messsage).await;
+        let _ = websocket.send_json(&serialized).await;
+    }
+}
+
+async fn broadcast_internal_server_error(shared_context: SharedContext, task_group: &Uuid) {
+    // Broadcast internal server error to all clients.
+    let websockets = shared_context.ws_clients.get_all(&task_group).await;
+    for websocket in websockets {
+        shortcuts::internal_server_error(&websocket).await;
     }
 }

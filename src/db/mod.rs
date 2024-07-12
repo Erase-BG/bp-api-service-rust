@@ -121,7 +121,7 @@ pub mod models {
             state.serialize_field("task_group", &self.task_group)?;
 
             // Url configurations from environment variables.
-            let scheme = "https://";
+            let scheme = "https";
             let host = match env::var("HOST") {
                 Ok(value) => value,
                 Err(error) => {
@@ -289,7 +289,7 @@ pub mod models {
         /// Updates existing record in the database of matching `key`.
         ///
         pub async fn update_task(
-            db_wrapper: DBWrapper,
+            db_wrapper: Arc<DBWrapper>,
             update_task: &UpdateBackgroundRemoverTask,
         ) -> Result<(), sqlx::Error> {
             let connection = db_wrapper.pool.clone();
