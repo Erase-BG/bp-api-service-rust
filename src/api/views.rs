@@ -129,6 +129,41 @@ pub async fn public_upload(request: Request) -> Response {
     }))
 }
 
+pub async fn task_details_view(request: Request) -> Response {
+    let context = request.context::<SharedContext>().unwrap();
+    let task_id = match Uuid::parse_str(request.path_params.value("task_id").unwrap()) {
+        Ok(uuid) => uuid,
+        Err(error) => {
+            log::error!("{}", error);
+
+            return JsonResponse::bad_request().body(json!({
+                "error": "Not a valid task id format."
+            }));
+        }
+    };
+
+    let instance = match BackgroundRemoverTask::fetch(context.db_wrapper.clone(), &task_id).await {
+        Ok(instance) => instance,
+        Err(error) => {
+            log::error!("{}", error);
+
+            return JsonResponse::not_found().body(json!({
+                "error": "Invalid task id."
+            }));
+        }
+    };
+
+    let serialized = match instance.serialize() {
+        Ok(serialized) => serialized,
+        Err(error) => {
+            log::error!("{}", error);
+            return JsonResponse::internal_server_error().empty();
+        }
+    };
+
+    JsonResponse::ok().body(serialized)
+}
+
 pub async fn listen_processing_ws(request: Request) -> Response {
     let (websocket, connected) = WebSocket::from(&request).await;
     if !connected {

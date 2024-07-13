@@ -170,6 +170,7 @@ pub fn generate_save_path(for_image: ForImage) -> std::io::Result<PathBuf> {
                 relative_url,
             ))
         }
+
         ForImage::TransparentImage(uuid, filename) => {
             relative_url.push(uuid.to_string());
             relative_url.push("transparent");
