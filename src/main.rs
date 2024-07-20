@@ -60,12 +60,18 @@ async fn main() -> std::io::Result<()> {
             async move {
                 // Spawns new tokio task. Pros: functions even if crashed, runs tasks in concurrently in background.
                 tokio::spawn(async move {
-                    task::handle_response_received_from_bp_server(
-                        shared_context_cloned,
-                        files,
-                        message,
+                    // These tasks may run for long time. So set timeout to prevent unintended bug
+                    // which hangs runtime.
+                    let result = tokio::time::timeout(
+                        Duration::from_secs(6),
+                        task::handle_response_received_from_bp_server(
+                            shared_context_cloned,
+                            files,
+                            message,
+                        ),
                     )
                     .await;
+                    println!("Handle bp server response result: {:?}", result);
                 });
             }
         })

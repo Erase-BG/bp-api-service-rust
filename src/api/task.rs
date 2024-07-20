@@ -2,6 +2,7 @@ use std::env;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use racoon::core::websocket::{Message, WebSocket};
 
@@ -38,7 +39,13 @@ pub async fn send(
     let files = [file];
 
     // Sends files to BP Server.
-    bp_request_client.send(&files, &message).await?;
+    let result = tokio::time::timeout(
+        Duration::from_secs(12),
+        bp_request_client.send(&files, &message),
+    )
+    .await?;
+
+    println!("Send task result: {:?}", result);
     Ok(())
 }
 
