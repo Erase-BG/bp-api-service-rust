@@ -1621,6 +1621,8 @@ dependencies = [
 [[package]]
 name = "racoon"
 version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "37c5bd9920fe81deea67546893c3cf5ca48a4db72ff42a711ee100469b75d4b7"
 dependencies = [
  "async-tempfile",
  "base64 0.22.0",
@@ -2365,7 +2367,7 @@ checksum = "e1fc403891a21bcfb7c37834ba66a547a8f402146eba7265b5a6d88059c9ff2f"
 [[package]]
 name = "tej-protoc"
 version = "0.0.1"
-source = "git+https://github.com/tejmagar/tej-protoc-rust?rev=fa67084#fa67084f145906a85c59fc4824ea3b515b0ee93d"
+source = "git+https://github.com/tejmagar/tej-protoc-rust?rev=7fe6125#7fe612562ea314025da448ce9eb5b63b15b27d5d"
 dependencies = [
  "tokio 1.38.0",
 ]
