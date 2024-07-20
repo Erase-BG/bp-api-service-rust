@@ -44,7 +44,6 @@ pub async fn send(
         media_root,
         PathBuf::from(&task.original_image_path),
     );
-    println!("{:?}", original_image_file_path);
     let mut original_image_file = fs::File::open(&original_image_file_path).await?;
     let mut buffer = vec![];
     original_image_file.read_to_end(&mut buffer).await?;
