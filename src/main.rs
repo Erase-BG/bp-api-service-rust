@@ -1,3 +1,4 @@
+use std::env;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -25,10 +26,20 @@ async fn main() -> std::io::Result<()> {
     env_logger::Builder::from_env(Env::default().default_filter_or("debug")).init();
     dotenv::dotenv().ok();
 
+    let bp_server_host = match env::var("BP_SERVER_HOST") {
+        Ok(value) => value,
+        Err(error) => {
+            return Err(std::io::Error::other(format!(
+                "BP_SERVER_HOST is missing from environment variable. Error: {}",
+                error
+            )))
+        }
+    };
+
     let db_wrapper = Arc::new(db::setup().await?);
     let ws_clients = Arc::new(WsClients::new());
     let bp_request_client = Arc::new(BPRequestClient::new(
-        "127.0.0.1:6789",
+        bp_server_host,
         8096,
         Duration::from_secs(3),
     ));

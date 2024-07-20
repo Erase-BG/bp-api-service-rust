@@ -100,6 +100,8 @@ pub mod models {
         pub preview_processed_image_path: Option<String>,
         /// Background removal status.
         pub processing: Option<bool>,
+        /// Country from where photo is uploaded.
+        pub country: Option<String>,
         /// Encoded string to identiy user.
         pub user_identifier: Option<String>,
         /// Task logs.
@@ -138,17 +140,17 @@ pub mod models {
             state.serialize_field("original_image", &full_original_image_url)?;
 
             // Adds full media image url to JSON object.
-            let full_media_image_url;
+            let full_media_preview_image_url;
             if let Some(preview_original_path) = &self.preview_original_image_path {
-                full_media_image_url = Some(path_utils::full_media_url_from_relative_path(
+                full_media_preview_image_url = Some(path_utils::full_media_url_from_relative_path(
                     scheme,
                     &host,
                     PathBuf::from(preview_original_path),
                 ));
             } else {
-                full_media_image_url = None;
+                full_media_preview_image_url = None;
             }
-            state.serialize_field("preview_original_image", &full_media_image_url)?;
+            state.serialize_field("preview_original_image", &full_media_preview_image_url)?;
 
             // Adds full processed image url to JSON object.
             let full_processed_original_image_url;
@@ -179,8 +181,22 @@ pub mod models {
 
             state.serialize_field("preview_processed_path", &full_preview_processed_image_url)?;
 
+            let full_mask_image_url;
+            if let Some(preview_mask_path) = &self.mask_image_path {
+                full_mask_image_url = Some(path_utils::full_media_url_from_relative_path(
+                    scheme,
+                    &host,
+                    PathBuf::from(preview_mask_path),
+                ));
+            } else {
+                full_mask_image_url = None;
+            }
+
+            state.serialize_field("mask_image", &full_mask_image_url)?;
+
             state.serialize_field("processing", &self.processing)?;
             state.serialize_field("user_identifier", &self.user_identifier)?;
+            state.serialize_field("country", &self.country)?;
             state.serialize_field("logs", &self.logs)?;
             state.end()
         }
@@ -234,7 +250,7 @@ pub mod models {
                 }
             };
 
-            const REMOVE_FIELDS: [&str; 2] = ["task_id", "logs"];
+            const REMOVE_FIELDS: [&str; 3] = ["task_id", "country", "logs"];
             let map_object = serialized_full.as_object_mut();
 
             if let Some(map) = map_object {

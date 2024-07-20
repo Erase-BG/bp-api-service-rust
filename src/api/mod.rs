@@ -52,7 +52,7 @@ pub async fn middleware(request: Request, view: Option<View>) -> Response {
 
 pub async fn run_server(shared_context: SharedContext) -> std::io::Result<()> {
     let bind_address =
-        env::var("HOST").expect("HOST value not present in not found in environment variable.");
+        env::var("BIND_ADDRESS").expect("BIND_ADDRESS value not present in not found in environment variable.");
 
     // Available url routes served by the server.
     let urls = urls::register_urls();
