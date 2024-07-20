@@ -403,8 +403,8 @@ pub mod models {
             Ok(models)
         }
 
-        pub async fn length(db_wrapper: DBWrapper) -> Result<u64, sqlx::Error> {
-            let connection = db_wrapper.pool;
+        pub async fn length(db_wrapper: Arc<DBWrapper>) -> Result<u64, sqlx::Error> {
+            let connection = db_wrapper.pool.clone();
             const COUNT_QUERY: &str = r#"
                 SELECT COUNT(task_id) AS total FROM background_remover_task
             "#;

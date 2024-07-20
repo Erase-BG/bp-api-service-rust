@@ -208,3 +208,85 @@ pub async fn listen_processing_ws(request: Request) -> Response {
     ws_clients.remove(&task_group, websocket.clone()).await;
     websocket.exit()
 }
+
+///
+/// Endpoint for displaying all the background remover tasks.
+///
+pub async fn tasks_view(request: Request) -> Response {
+    let shared_context = request.context::<SharedContext>().unwrap();
+
+    let page_num: u32;
+    if let Some(param_page) = request.query_params.value("page") {
+        // Type casts page string to u32. If fails returns JSON error
+        page_num = match param_page.parse::<u32>() {
+            Ok(value) => value,
+            Err(error) => {
+                log::error!(
+                    "Page number string to u32 conversion error. Error: {:?}",
+                    error
+                );
+                return JsonResponse::bad_request().body(json!({
+                    "status": "failed",
+                    "status_code": "bad_query",
+                    "message": "Invalid page format",
+                }));
+            }
+        };
+    } else {
+        page_num = 1;
+    }
+
+    let models =
+        match BackgroundRemoverTask::fetch_by_page(shared_context.db_wrapper.clone(), page_num)
+            .await
+        {
+            Ok(models) => models,
+            Err(error) => {
+                println!("Failed to fetch models. Error: {}", error);
+
+                return JsonResponse::internal_server_error().body(json!({
+                    "status": "failed",
+                    "status_code": "internal_server_error",
+                }));
+            }
+        };
+
+    let mut values = vec![];
+    for instance in models {
+        match instance.serialize_full() {
+            Ok(serialized) => {
+                values.push(serialized);
+            }
+
+            Err(error) => {
+                log::error!("Failed to serialize. Error: {}", error);
+            }
+        }
+    }
+
+    let total = match BackgroundRemoverTask::length(shared_context.db_wrapper.clone()).await {
+        Ok(value) => value,
+        Err(error) => {
+            log::error!("Failed to get length: Error: {}", error);
+            return JsonResponse::internal_server_error().empty();
+        }
+    };
+
+    // Hard coded base url
+    let base_url = "https://apistaging.erasebg.org/v1/remove-tasks/";
+    let next_url = format!("{}?page=", page_num + 1);
+    let previous_url;
+
+    if page_num == 0 {
+        previous_url = Some(format!("{}?page={}", base_url, page_num - 1));
+    } else {
+        previous_url = None;
+    }
+
+    JsonResponse::ok().body(json!({
+        "count": total,
+        "next": next_url,
+        "previous": previous_url,
+        "results": values
+    }))
+}

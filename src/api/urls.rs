@@ -1,7 +1,7 @@
 use racoon::core::path::Path;
 use racoon::view;
 
-use crate::api::views::{listen_processing_ws, public_upload, task_details_view};
+use crate::api::views::{listen_processing_ws, public_upload, task_details_view, tasks_view};
 
 pub fn register_urls() -> Vec<Path> {
     vec![
@@ -14,5 +14,6 @@ pub fn register_urls() -> Vec<Path> {
             "/ws/remove-background/{task_group}/",
             view!(listen_processing_ws),
         ),
+        Path::new("/v1/remove-tasks/", view!(tasks_view)),
     ]
 }
