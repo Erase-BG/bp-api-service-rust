@@ -179,7 +179,7 @@ pub mod models {
                 full_preview_processed_image_url = None;
             }
 
-            state.serialize_field("preview_processed_path", &full_preview_processed_image_url)?;
+            state.serialize_field("preview_processed_image", &full_preview_processed_image_url)?;
 
             let full_mask_image_url;
             if let Some(preview_mask_path) = &self.mask_image_path {

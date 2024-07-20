@@ -32,7 +32,20 @@ pub async fn send(
         "task_id": task.key.to_string(),
     });
 
-    let mut original_image_file = fs::File::open(&task.original_image_path).await?;
+    let media_root = match env::var("MEDIA_ROOT") {
+        Ok(path) => PathBuf::from(path),
+        Err(error) => {
+            eprintln!("MEDIA_ROOT environment variable is missing.");
+            return Err(std::io::Error::other(error));
+        }
+    };
+
+    let original_image_file_path = path_utils::file_path_from_relative_url(
+        media_root,
+        PathBuf::from(&task.original_image_path),
+    );
+    println!("{:?}", original_image_file_path);
+    let mut original_image_file = fs::File::open(&original_image_file_path).await?;
     let mut buffer = vec![];
     original_image_file.read_to_end(&mut buffer).await?;
     let file = File::new(b"original.jpg".to_vec(), buffer);

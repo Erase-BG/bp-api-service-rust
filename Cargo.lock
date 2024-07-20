@@ -149,7 +149,7 @@ version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c17d4a3286e6518d84be399efb8901aa74a183753b0bf4a8a4afe5bcfedcbb08"
 dependencies = [
- "tokio 1.38.0",
+ "tokio 1.38.1",
 ]
 
 [[package]]
@@ -324,7 +324,7 @@ dependencies = [
  "serde_json",
  "sqlx",
  "tej-protoc",
- "tokio 1.38.0",
+ "tokio 1.38.1",
  "uuid",
 ]
 
@@ -1639,7 +1639,7 @@ dependencies = [
  "serde_json",
  "sha1",
  "sqlx",
- "tokio 1.38.0",
+ "tokio 1.38.1",
  "tokio-rustls",
  "tokio-tls",
  "urlencoding",
@@ -2151,7 +2151,7 @@ dependencies = [
  "smallvec",
  "sqlformat",
  "thiserror",
- "tokio 1.38.0",
+ "tokio 1.38.1",
  "tokio-stream",
  "tracing",
  "url",
@@ -2193,7 +2193,7 @@ dependencies = [
  "sqlx-sqlite",
  "syn 1.0.109",
  "tempfile",
- "tokio 1.38.0",
+ "tokio 1.38.1",
  "url",
 ]
 
@@ -2369,7 +2369,7 @@ name = "tej-protoc"
 version = "0.0.1"
 source = "git+https://github.com/tejmagar/tej-protoc-rust?rev=7fe6125#7fe612562ea314025da448ce9eb5b63b15b27d5d"
 dependencies = [
- "tokio 1.38.0",
+ "tokio 1.38.1",
 ]
 
 [[package]]
@@ -2442,9 +2442,9 @@ dependencies = [
 
 [[package]]
 name = "tokio"
-version = "1.38.0"
+version = "1.38.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ba4f4a02a7a80d6f274636f0aa95c7e383b912d41fe721a31f29e29698585a4a"
+checksum = "eb2caba9f80616f438e09748d5acda951967e1ea58508ef53d9c6402485a46df"
 dependencies = [
  "backtrace",
  "bytes 1.6.0",
@@ -2478,7 +2478,7 @@ checksum = "0c7bc40d0e5a97695bb96e27995cd3a08538541b0a846f65bba7a359f36700d4"
 dependencies = [
  "rustls",
  "rustls-pki-types",
- "tokio 1.38.0",
+ "tokio 1.38.1",
 ]
 
 [[package]]
@@ -2489,7 +2489,7 @@ checksum = "267ac89e0bec6e691e5813911606935d77c476ff49024f98abcea3e7b15e37af"
 dependencies = [
  "futures-core",
  "pin-project-lite 0.2.14",
- "tokio 1.38.0",
+ "tokio 1.38.1",
 ]
 
 [[package]]
