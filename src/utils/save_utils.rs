@@ -14,12 +14,24 @@ use super::path_utils::{self, ForImage};
 pub async fn save_files_received_from_bp_server(
     instance: &BackgroundRemoverTask,
     files: &Vec<File>,
+    is_fake_processed: bool,
 ) -> std::io::Result<(PathBuf, PathBuf, PathBuf)> {
-    if files.len() < 3 {
-        return Err(std::io::Error::other(format!(
-            "Minimum 3 files required. But received {}.",
-            files.len()
-        )));
+    println!("Is fake processed: {}", is_fake_processed);
+
+    if is_fake_processed {
+        if files.len() < 2 {
+            return Err(std::io::Error::other(format!(
+                "Minimum 2 files required for fake processed. But received {}.",
+                files.len()
+            )));
+        }
+    } else {
+        if files.len() < 3 {
+            return Err(std::io::Error::other(format!(
+                "Minimum 3 files required. But received {}.",
+                files.len()
+            )));
+        }
     }
 
     let original_image_path = PathBuf::from(&instance.original_image_path);
@@ -32,7 +44,7 @@ pub async fn save_files_received_from_bp_server(
 
     let transparent_image = &files[0];
     let mask_image = &files[1];
-    let preview_transparent_image = &files[2];
+    let preview_transparent_image = &files[0];
 
     let png_filename = format!("{}.png", filename_without_extension.to_string_lossy());
 

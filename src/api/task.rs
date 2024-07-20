@@ -244,8 +244,10 @@ pub async fn handle_response_received_from_bp_server(
             }
         };
 
-    if bp_response.status == "success" && bp_response.status_code == "process_completed" {
-        handle_files_received_from_bp_server(shared_context, instance, &files).await;
+    if bp_response.status == "success" {
+        let is_fake_processed = bp_response.status_code == "fake_process_completed";
+        handle_files_received_from_bp_server(shared_context, instance, &files, is_fake_processed)
+            .await;
     } else {
         let websockets = shared_context
             .ws_clients
@@ -268,11 +270,14 @@ async fn handle_files_received_from_bp_server(
     shared_context: SharedContext,
     instance: BackgroundRemoverTask,
     files: &Vec<File>,
+    is_fake_processed: bool,
 ) {
     // Saves files received from BP Server. These paths are absolute and should not be used for
     // saving in database.
     let (transparent_image_path, mask_image_path, preview_transparent_image_path) =
-        match save_utils::save_files_received_from_bp_server(&instance, &files).await {
+        match save_utils::save_files_received_from_bp_server(&instance, &files, is_fake_processed)
+            .await
+        {
             Ok(paths) => paths,
             Err(error) => {
                 eprintln!(
@@ -379,7 +384,13 @@ async fn handle_files_received_from_bp_server(
 
     // Broadcasts response to all websocket clients.
     for websocket in websockets {
-        let _ = websocket.send_json(&serialized).await;
+        let _ = websocket
+            .send_json(&json!({
+                "status": "success",
+                "status_code": "result",
+                "data": serialized
+            }))
+            .await;
     }
 }
 
