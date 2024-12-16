@@ -19,3 +19,17 @@ POSTGRES_URL=
 ```shell
 cargo run --release
 ```
+
+## Docker commands
+
+### Building image
+```bash
+sudo docker build -t sagasab/bp-api-service-rust:v0.1 .
+```
+
+### Running image
+```bash
+sudo docker pull ghcr.io/sagasab/bp-api-service-rust:v0.1
+sudo docker run sagasab/bp-api-service-rust:v0.1
+```
+

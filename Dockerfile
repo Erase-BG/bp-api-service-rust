@@ -9,16 +9,16 @@ COPY . .
 # Builds the Rust binary in release mode
 RUN cargo build --release
 
+# Makes binary executable
+RUN chmod +x target/release/bp-api-service
+
 # Runtime stage
-FROM alpine:latest
+FROM gcr.io/distroless/cc
 
 WORKDIR /app
 
 # Copies compiled binary from the builder stage
 COPY --from=builder /app/target/release/bp-api-service .
-
-# Makes binary executable
-RUN chmod +x bp-api-service
 
 # Runs the compiled binary
 CMD ["./bp-api-service"]
