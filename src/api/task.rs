@@ -41,9 +41,13 @@ pub async fn send(
     };
 
     let original_image_file_path = path_utils::file_path_from_relative_url(
-        media_root,
+        media_root.clone(),
         PathBuf::from(&task.original_image_path),
     );
+    println!("MEDIA_ROOT: {:?}", media_root);
+    println!("ORIGINAL IMAGE PATH: {:?}", task.original_image_path);
+    println!("Original path: {:?}", original_image_file_path);
+
     let mut original_image_file = fs::File::open(&original_image_file_path).await?;
     let mut buffer = vec![];
     original_image_file.read_to_end(&mut buffer).await?;
@@ -199,6 +203,7 @@ pub async fn handle_process_image_command(
                 .await;
             }
             Err(error) => {
+                eprintln!("{}", instance.original_image_path);
                 eprintln!("Failed to send task to bp server. Error: {}", error);
             }
         };
