@@ -65,7 +65,22 @@ pub async fn public_upload(request: Request) -> Response {
     };
 
     // Moves original image to the configured destination.
-    let _ = tokio::fs::rename(original_image.temp_path, &original_image_save_path).await;
+    println!(
+        "Moving file from: {:?} to {:?}",
+        original_image.temp_path, original_image_save_path
+    );
+    let result = tokio::fs::copy(original_image.temp_path, &original_image_save_path).await;
+
+    let destination = std::path::PathBuf::from(&original_image_save_path);
+    if !destination.exists() {
+        eprintln!("File move called but not moved. More info:");
+        eprintln!("{:?}", result);
+
+        return JsonResponse::internal_server_error().body(json!({
+            "status": "failed",
+            "message": "Internal server error.",
+        }))
+    }
 
     // Saves to database
     let task_group = validated_form.task_group.value().await;
